@@ -65,7 +65,7 @@ export function renderScript(container, getSelectedTopic) {
       <div class="script-output" id="script-text"></div>
       <div class="script-actions">
         <button class="btn btn-secondary" id="copy-script-btn">Copy Script</button>
-        <button class="btn btn-secondary" id="send-to-voice-btn">Send to Voice Tab</button>
+        <button class="btn btn-secondary" id="send-to-video-btn">Send to Video Tab</button>
       </div>
     </div>
   `;
@@ -129,9 +129,9 @@ async function generateScript(container) {
       });
     };
 
-    // Wire "send to voice" button — dispatches a custom event
-    container.querySelector('#send-to-voice-btn').onclick = () => {
-      document.dispatchEvent(new CustomEvent('send-to-voice', { detail: { script } }));
+    // Wire "send to video" button — dispatches a custom event
+    container.querySelector('#send-to-video-btn').onclick = () => {
+      document.dispatchEvent(new CustomEvent('send-to-video', { detail: { script } }));
     };
 
   } catch (err) {
