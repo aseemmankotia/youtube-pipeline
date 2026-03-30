@@ -122,9 +122,15 @@ export function renderElevenLabs(container) {
   };
   scriptTA.addEventListener('input', updateCharCount);
 
+  // Expose setter for app.js auto-pipeline wiring
+  container._setScript = (script) => {
+    scriptTA.value = script || '';
+    updateCharCount();
+  };
+
   // Receive script from Script Generator tab
   document.addEventListener('send-to-voice', (e) => {
-    scriptTA.value = e.detail.script || '';
+    scriptTA.value = e.detail?.script || '';
     updateCharCount();
   });
 
@@ -186,7 +192,12 @@ async function generateVoice(container) {
     resultEl.style.display = 'block';
     player.play().catch(() => {});
 
-    statusEl.innerHTML = `<div class="status-bar success">Audio generated successfully!</div>`;
+    statusEl.innerHTML = `<div class="status-bar success">Audio generated! Auto-starting Step 4…</div>`;
+
+    // Fire event so HeyGen tab can auto-start
+    document.dispatchEvent(new CustomEvent('audio-complete', {
+      detail: { script, audioUrl: url },
+    }));
   } catch (err) {
     statusEl.innerHTML = `<div class="status-bar error">${escHtml(err.message)}</div>`;
   } finally {

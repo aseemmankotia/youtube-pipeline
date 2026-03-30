@@ -1,6 +1,7 @@
-import { renderTopics }      from './components/topics.js';
-import { renderScript }      from './components/script.js';
-import { renderElevenLabs }  from './components/elevenlabs.js';
+import { renderTopics }     from './components/topics.js';
+import { renderScript }     from './components/script.js';
+import { renderElevenLabs } from './components/elevenlabs.js';
+import { renderHeyGen }     from './components/heygen.js';
 
 // ── Tab routing ──────────────────────────────────────────────────────────────
 
@@ -21,19 +22,29 @@ tabBtns.forEach(btn => {
 const topicsPanel = document.getElementById('tab-topics');
 const scriptPanel = document.getElementById('tab-script');
 const voicePanel  = document.getElementById('tab-voice');
-
-// Callback: when a topic is selected in the Topics tab,
-// pre-fill the Script Generator and optionally switch to it.
-function onTopicSelect(topic) {
-  if (scriptPanel._setTopic) scriptPanel._setTopic(topic);
-}
+const videoPanel  = document.getElementById('tab-video');
 
 renderTopics(topicsPanel, onTopicSelect);
 renderScript(scriptPanel, () => {});
 renderElevenLabs(voicePanel);
+renderHeyGen(videoPanel);
 
-// When "Send to Voice Tab" is clicked from Script Generator,
-// switch to the Voice tab automatically.
-document.addEventListener('send-to-voice', () => {
+// ── Auto-pipeline event chain ─────────────────────────────────────────────────
+
+// Step 1 → Step 2: selecting a topic pre-fills the script input
+function onTopicSelect(topic) {
+  if (scriptPanel._setTopic) scriptPanel._setTopic(topic);
+}
+
+// Step 2 → Step 3: "Send to Voice Tab" button switches tab + fills script
+document.addEventListener('send-to-voice', (e) => {
+  if (voicePanel._setScript) voicePanel._setScript(e.detail?.script);
   switchTab('voice');
+});
+
+// Step 3 → Step 4: ElevenLabs audio complete → switch to HeyGen tab
+// (HeyGen component auto-starts if its API key + avatar ID are already filled)
+document.addEventListener('audio-complete', (e) => {
+  if (videoPanel._setScript) videoPanel._setScript(e.detail?.script);
+  switchTab('video');
 });
