@@ -1,14 +1,15 @@
 /**
- * Script Generator Component
- * Generates a full YouTube video script via the Claude (Anthropic) API
- * or falls back to a local template-based generator when no API key is set.
+ * Script Generator Component — Step 2
+ * Credentials are read from Settings tab via getSettings().
  */
 
-const TONES = ['Engaging & Energetic', 'Educational & Calm', 'Humorous & Casual', 'Inspirational', 'Documentary-Style'];
-const LENGTHS = ['Short (3–5 min)', 'Medium (8–12 min)', 'Long (18–25 min)'];
-const STYLES = ['Entertainment', 'Tutorial / How-To', 'Opinion / Commentary', 'News / Explainer', 'Storytime / Narrative'];
+import { getSettings } from './settings.js';
 
-export function renderScript(container, getSelectedTopic) {
+const TONES   = ['Engaging & Energetic', 'Educational & Calm', 'Humorous & Casual', 'Inspirational', 'Documentary-Style'];
+const LENGTHS = ['Short (3–5 min)', 'Medium (8–12 min)', 'Long (18–25 min)'];
+const STYLES  = ['Entertainment', 'Tutorial / How-To', 'Opinion / Commentary', 'News / Explainer', 'Storytime / Narrative'];
+
+export function renderScript(container) {
   container.innerHTML = `
     <div class="card">
       <h2>Script Generator</h2>
@@ -46,14 +47,6 @@ export function renderScript(container, getSelectedTopic) {
         </div>
       </div>
 
-      <div class="form-group">
-        <label for="claude-key">
-          Claude API Key
-          <span style="color:var(--muted);font-weight:400"> — leave blank to use template mode</span>
-        </label>
-        <input type="password" id="claude-key" placeholder="sk-ant-…" autocomplete="off" />
-      </div>
-
       <button class="btn btn-primary" id="generate-script-btn">
         <span>Generate Script</span>
       </button>
@@ -70,11 +63,8 @@ export function renderScript(container, getSelectedTopic) {
     </div>
   `;
 
-  // Auto-fill topic when one is selected from the Topics tab
-  const topicInput = container.querySelector('#script-topic');
-  // Expose a setter for app.js to call
   container._setTopic = (topic) => {
-    if (topic) topicInput.value = topic.title || topic;
+    if (topic) container.querySelector('#script-topic').value = topic.title || topic;
   };
 
   container.querySelector('#generate-script-btn').addEventListener('click', () => {
@@ -88,7 +78,7 @@ async function generateScript(container) {
   const length  = container.querySelector('#script-length').value;
   const style   = container.querySelector('#script-style').value;
   const channel = container.querySelector('#script-channel').value.trim();
-  const apiKey  = container.querySelector('#claude-key').value.trim();
+  const { claudeApiKey: apiKey } = getSettings();
 
   const statusEl = container.querySelector('#script-status');
   const outCard  = container.querySelector('#script-output-card');
@@ -113,14 +103,13 @@ async function generateScript(container) {
       script = generateTemplate({ topic, tone, length, style, channel });
       statusEl.innerHTML = `
         <div class="status-bar info">
-          Template mode — add a Claude API key above for AI-generated scripts.
+          Template mode — add a Claude API key in <strong>⚙ Settings</strong> for AI-generated scripts.
         </div>`;
     }
 
     textEl.textContent = script;
     outCard.style.display = 'block';
 
-    // Wire copy button
     container.querySelector('#copy-script-btn').onclick = () => {
       navigator.clipboard.writeText(script).then(() => {
         const b = container.querySelector('#copy-script-btn');
@@ -129,7 +118,6 @@ async function generateScript(container) {
       });
     };
 
-    // Wire "send to video" button — dispatches a custom event
     container.querySelector('#send-to-video-btn').onclick = () => {
       const topic = container.querySelector('#script-topic').value.trim();
       document.dispatchEvent(new CustomEvent('send-to-video', { detail: { script, topic } }));

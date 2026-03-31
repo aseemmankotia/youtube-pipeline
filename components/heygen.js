@@ -1,8 +1,9 @@
 /**
  * HeyGen Video Generation Component — Step 3
- * Sends the script to HeyGen's v2 API, polls for completion,
- * and shows a preview + download when ready.
+ * Credentials are read from Settings tab via getSettings().
  */
+
+import { getSettings } from './settings.js';
 
 const POLL_INTERVAL_MS = 10_000;
 
@@ -10,22 +11,6 @@ export function renderHeyGen(container) {
   container.innerHTML = `
     <div class="card">
       <h2>Generate Video</h2>
-
-      <div class="form-row">
-        <div class="form-group">
-          <label for="hg-api-key">HeyGen API Key</label>
-          <input type="password" id="hg-api-key" placeholder="sk_V2_…" autocomplete="off" />
-        </div>
-        <div class="form-group">
-          <label for="hg-avatar-id">Avatar ID</label>
-          <input type="text" id="hg-avatar-id" placeholder="e.g. josh_lite3_20230714" />
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label for="hg-voice-id">Voice ID</label>
-        <input type="text" id="hg-voice-id" placeholder="e.g. 3ec6fddde15a4f5bacf2c1557ecea26f" />
-      </div>
 
       <div class="form-group">
         <label for="hg-script">Script</label>
@@ -62,7 +47,6 @@ export function renderHeyGen(container) {
     </div>
   `;
 
-  // Setters used by app.js auto-pipeline
   container._setScript = (script) => {
     container.querySelector('#hg-script').value = script || '';
   };
@@ -77,39 +61,39 @@ export function renderHeyGen(container) {
       startGeneration(container);
     });
 
-  // Auto-start when script arrives from Step 2 (if credentials already filled)
+  // Auto-start when script arrives from Step 2 (if credentials are saved)
   document.addEventListener('send-to-video', (e) => {
     const { script, topic } = e.detail || {};
     if (script) container._setScript(script);
     if (topic)  container._topic = topic;
-    const apiKey   = container.querySelector('#hg-api-key').value.trim();
-    const avatarId = container.querySelector('#hg-avatar-id').value.trim();
-    const voiceId  = container.querySelector('#hg-voice-id').value.trim();
-    if (apiKey && avatarId && voiceId) startGeneration(container);
+    const { heygenApiKey, heygenAvatarId, heygenVoiceId } = getSettings();
+    if (heygenApiKey && heygenAvatarId && heygenVoiceId) startGeneration(container);
   });
 }
 
 async function startGeneration(container) {
-  const apiKey   = container.querySelector('#hg-api-key').value.trim();
-  const avatarId = container.querySelector('#hg-avatar-id').value.trim();
-  const voiceId  = container.querySelector('#hg-voice-id').value.trim();
-  const script   = container.querySelector('#hg-script').value.trim();
+  const { heygenApiKey: apiKey, heygenAvatarId: avatarId, heygenVoiceId: voiceId } = getSettings();
+  const script = container.querySelector('#hg-script').value.trim();
 
-  const statusEl      = container.querySelector('#hg-status');
-  const progressCard  = container.querySelector('#hg-progress-card');
-  const resultCard    = container.querySelector('#hg-result-card');
-  const btn           = container.querySelector('#generate-video-btn');
-  const retryBtn      = container.querySelector('#hg-retry-btn');
+  const statusEl     = container.querySelector('#hg-status');
+  const progressCard = container.querySelector('#hg-progress-card');
+  const resultCard   = container.querySelector('#hg-result-card');
+  const btn          = container.querySelector('#generate-video-btn');
+  const retryBtn     = container.querySelector('#hg-retry-btn');
 
   statusEl.innerHTML = '';
   progressCard.style.display = 'none';
   resultCard.style.display   = 'none';
   retryBtn.style.display     = 'none';
 
-  if (!apiKey)   { statusEl.innerHTML = err('Please enter your HeyGen API key.');  return; }
-  if (!avatarId) { statusEl.innerHTML = err('Please enter an Avatar ID.');          return; }
-  if (!voiceId)  { statusEl.innerHTML = err('Please enter a Voice ID.');            return; }
-  if (!script)   { statusEl.innerHTML = err('Script is empty — generate one in Step 2 first.'); return; }
+  if (!apiKey || !avatarId || !voiceId) {
+    statusEl.innerHTML = err('HeyGen credentials missing — open <strong>⚙ Settings</strong> to add them.');
+    return;
+  }
+  if (!script) {
+    statusEl.innerHTML = err('Script is empty — generate one in Step 2 first.');
+    return;
+  }
 
   btn.disabled = true;
   btn.innerHTML = '<span class="loader"></span><span>Submitting…</span>';
@@ -197,8 +181,8 @@ async function pollUntilDone({ apiKey, videoId, script, container }) {
           `https://api.heygen.com/v1/video_status.get?video_id=${encodeURIComponent(videoId)}`,
           { headers: { 'X-Api-Key': apiKey } }
         );
-        const data   = await res.json();
-        const status = data?.data?.status;
+        const data     = await res.json();
+        const status   = data?.data?.status;
         const videoUrl = data?.data?.video_url;
 
         if (status === 'completed' && videoUrl) {
@@ -211,7 +195,9 @@ async function pollUntilDone({ apiKey, videoId, script, container }) {
           container.querySelector('#hg-download-btn').href = videoUrl;
           resultCard.style.display = 'block';
           statusEl.innerHTML = `<div class="status-bar success">Video ready!</div>`;
-          document.dispatchEvent(new CustomEvent('video-complete', { detail: { videoUrl, videoId, script, topic: container._topic } }));
+          document.dispatchEvent(new CustomEvent('video-complete', {
+            detail: { videoUrl, videoId, script, topic: container._topic },
+          }));
           resolve(videoUrl);
 
         } else if (status === 'failed') {

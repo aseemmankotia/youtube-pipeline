@@ -1,55 +1,19 @@
 /**
  * YouTube Upload Component — Step 4
- *
- * Credentials are stored in localStorage so they survive page reloads.
+ * Credentials are read from Settings tab via getSettings().
  * Upload flow:
- *   1. Refresh the access token via POST https://oauth2.googleapis.com/token
- *   2. Initiate a resumable upload session
- *   3. Fetch the video URL from HeyGen and upload it to YouTube in chunks
+ *   1. Refresh access token via POST https://oauth2.googleapis.com/token
+ *   2. Initiate resumable upload session
+ *   3. Fetch video blob and upload in 5 MB chunks
  *   4. Show progress bar + "View on YouTube" link when done
  */
 
-const LS_KEY = 'yt_pipeline_creds';
+import { getSettings } from './settings.js';
+
 const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB
 
 export function renderYouTube(container) {
-  const saved = loadCreds();
-
   container.innerHTML = `
-    <div class="card" id="yt-creds-card">
-      <h2>YouTube Credentials</h2>
-      <p style="font-size:0.85rem;color:var(--muted);margin-bottom:16px;">
-        Stored in <code>localStorage</code> — never sent anywhere except Google's OAuth endpoint.
-      </p>
-
-      <div class="form-row">
-        <div class="form-group">
-          <label for="yt-client-id">Client ID</label>
-          <input type="text" id="yt-client-id"
-            placeholder="386017…apps.googleusercontent.com"
-            value="${esc(saved.clientId)}" />
-        </div>
-        <div class="form-group">
-          <label for="yt-client-secret">Client Secret</label>
-          <input type="password" id="yt-client-secret"
-            placeholder="GOCSPX-…" autocomplete="off"
-            value="${esc(saved.clientSecret)}" />
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label for="yt-refresh-token">Refresh Token</label>
-        <textarea id="yt-refresh-token" rows="3"
-          placeholder="1//01… (from youtube-token.json)"
-          style="font-size:0.8rem;">${esc(saved.refreshToken)}</textarea>
-      </div>
-
-      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-        <button class="btn btn-secondary" id="yt-save-creds-btn">Save Credentials</button>
-        <span id="yt-creds-status" style="font-size:0.85rem;color:var(--muted);"></span>
-      </div>
-    </div>
-
     <div class="card">
       <h2>Upload to YouTube</h2>
 
@@ -112,76 +76,35 @@ export function renderYouTube(container) {
     </div>
   `;
 
-  // Save creds button
-  container.querySelector('#yt-save-creds-btn').addEventListener('click', () => {
-    saveCreds(container);
-  });
-
-  // Upload button
-  container.querySelector('#yt-upload-btn').addEventListener('click', () => {
-    startUpload(container);
-  });
-
-  // Retry button
+  container.querySelector('#yt-upload-btn').addEventListener('click', () => startUpload(container));
   container.querySelector('#yt-retry-btn').addEventListener('click', () => {
     container.querySelector('#yt-retry-btn').style.display = 'none';
     startUpload(container);
   });
 
-  // Auto-fill when HeyGen video is ready
   document.addEventListener('video-complete', (e) => {
     const { videoUrl, script, topic } = e.detail || {};
     if (videoUrl) container.querySelector('#yt-video-url').value = videoUrl;
     if (script)   fillMetadata(container, script, topic);
-    // Auto-start if credentials are already saved
-    if (loadCreds().refreshToken) startUpload(container);
+    const { ytClientId, ytClientSecret, ytRefreshToken } = getSettings();
+    if (ytClientId && ytClientSecret && ytRefreshToken) startUpload(container);
   });
 
-  // Expose setter for app.js
   container._setVideoData = ({ videoUrl, script, topic } = {}) => {
     if (videoUrl) container.querySelector('#yt-video-url').value = videoUrl;
     if (script)   fillMetadata(container, script, topic);
   };
 }
 
-// ── Credentials helpers ───────────────────────────────────────────────────────
-
-function loadCreds() {
-  try {
-    return JSON.parse(localStorage.getItem(LS_KEY) || '{}');
-  } catch { return {}; }
-}
-
-function saveCreds(container) {
-  const creds = {
-    clientId:     container.querySelector('#yt-client-id').value.trim(),
-    clientSecret: container.querySelector('#yt-client-secret').value.trim(),
-    refreshToken: container.querySelector('#yt-refresh-token').value.trim(),
-  };
-  localStorage.setItem(LS_KEY, JSON.stringify(creds));
-  const el = container.querySelector('#yt-creds-status');
-  el.textContent = 'Saved!';
-  el.style.color = '#7af57a';
-  setTimeout(() => { el.textContent = ''; }, 2000);
-}
-
-// ── Metadata helpers ──────────────────────────────────────────────────────────
+// ── Metadata ──────────────────────────────────────────────────────────────────
 
 function fillMetadata(container, script, topic) {
   const lines = script.split('\n').map(l => l.trim()).filter(Boolean);
-
-  // Title: first non-bracket line, or topic
   const titleLine = lines.find(l => !l.startsWith('[')) || topic || 'My YouTube Video';
   const title = titleLine.slice(0, 100);
-
-  // Description: first 3 non-bracket lines joined
-  const descLines = lines.filter(l => !l.startsWith('[')).slice(0, 3);
-  const description = descLines.join('\n');
-
-  // Tags: words from topic + first line, 3–20 chars, deduplicated
-  const tagSource = `${topic || ''} ${titleLine}`;
+  const description = lines.filter(l => !l.startsWith('[')).slice(0, 3).join('\n');
   const tags = [...new Set(
-    tagSource.split(/\W+/).filter(w => w.length >= 3 && w.length <= 20)
+    `${topic || ''} ${titleLine}`.split(/\W+/).filter(w => w.length >= 3 && w.length <= 20)
   )].slice(0, 10).join(', ');
 
   container.querySelector('#yt-title').value       = title;
@@ -192,34 +115,26 @@ function fillMetadata(container, script, topic) {
 // ── Upload flow ───────────────────────────────────────────────────────────────
 
 async function startUpload(container) {
-  const creds = loadCreds();
-  // Also check live input fields in case user hasn't saved yet
-  const clientId     = container.querySelector('#yt-client-id').value.trim()     || creds.clientId;
-  const clientSecret = container.querySelector('#yt-client-secret').value.trim() || creds.clientSecret;
-  const refreshToken = container.querySelector('#yt-refresh-token').value.trim() || creds.refreshToken;
-  const videoUrl     = container.querySelector('#yt-video-url').value.trim();
-  const title        = container.querySelector('#yt-title').value.trim()        || 'My YouTube Video';
-  const description  = container.querySelector('#yt-description').value.trim();
-  const tags         = container.querySelector('#yt-tags').value.split(',').map(t => t.trim()).filter(Boolean);
-  const privacy      = container.querySelector('#yt-privacy').value;
+  const { ytClientId: clientId, ytClientSecret: clientSecret, ytRefreshToken: refreshToken } = getSettings();
+  const videoUrl    = container.querySelector('#yt-video-url').value.trim();
+  const title       = container.querySelector('#yt-title').value.trim() || 'My YouTube Video';
+  const description = container.querySelector('#yt-description').value.trim();
+  const tags        = container.querySelector('#yt-tags').value.split(',').map(t => t.trim()).filter(Boolean);
+  const privacy     = container.querySelector('#yt-privacy').value;
 
-  const statusEl      = container.querySelector('#yt-status');
-  const progressCard  = container.querySelector('#yt-progress-card');
-  const resultCard    = container.querySelector('#yt-result-card');
-  const btn           = container.querySelector('#yt-upload-btn');
-  const retryBtn      = container.querySelector('#yt-retry-btn');
+  const statusEl    = container.querySelector('#yt-status');
+  const progressCard = container.querySelector('#yt-progress-card');
+  const resultCard  = container.querySelector('#yt-result-card');
+  const btn         = container.querySelector('#yt-upload-btn');
+  const retryBtn    = container.querySelector('#yt-retry-btn');
 
   statusEl.innerHTML = '';
   progressCard.style.display = 'none';
   resultCard.style.display   = 'none';
   retryBtn.style.display     = 'none';
 
-  if (!clientId || !clientSecret) {
-    statusEl.innerHTML = errBar('Enter your Client ID and Client Secret above.');
-    return;
-  }
-  if (!refreshToken) {
-    statusEl.innerHTML = errBar('Paste your Refresh Token above (from youtube-token.json).');
+  if (!clientId || !clientSecret || !refreshToken) {
+    statusEl.innerHTML = errBar('YouTube credentials missing — open <strong>⚙ Settings</strong> to add them.');
     return;
   }
   if (!videoUrl) {
@@ -231,32 +146,28 @@ async function startUpload(container) {
   btn.innerHTML = '<span class="loader"></span><span>Preparing…</span>';
 
   try {
-    // 1. Get a fresh access token
     statusEl.innerHTML = infoBar('Refreshing access token…');
     const accessToken = await refreshAccessToken({ clientId, clientSecret, refreshToken });
 
-    // 2. Fetch the video blob from HeyGen's CDN
     statusEl.innerHTML = infoBar('Downloading video from HeyGen…');
     const videoBlob = await fetchVideoBlob(videoUrl);
 
-    // 3. Initiate resumable upload session
     statusEl.innerHTML = infoBar('Initiating YouTube upload session…');
     const uploadUrl = await initiateResumableUpload({
       accessToken, title, description, tags, privacy,
       fileSize: videoBlob.size,
     });
 
-    // 4. Upload in chunks with progress
     progressCard.style.display = 'block';
     statusEl.innerHTML = '';
     const videoId = await uploadInChunks({ uploadUrl, videoBlob, container });
 
-    // 5. Done
     const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
     container.querySelector('#yt-view-link').href = ytUrl;
     resultCard.style.display = 'block';
-    statusEl.innerHTML = successBar(`Upload complete! <a href="${ytUrl}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">youtube.com/watch?v=${videoId}</a>`);
-
+    statusEl.innerHTML = successBar(
+      `Upload complete! <a href="${ytUrl}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">youtube.com/watch?v=${videoId}</a>`
+    );
     document.dispatchEvent(new CustomEvent('upload-complete', { detail: { videoId, ytUrl } }));
 
   } catch (err) {
@@ -293,18 +204,6 @@ async function fetchVideoBlob(videoUrl) {
 }
 
 async function initiateResumableUpload({ accessToken, title, description, tags, privacy, fileSize }) {
-  const metadata = {
-    snippet: {
-      title,
-      description,
-      tags,
-      categoryId: '28', // Science & Technology
-    },
-    status: {
-      privacyStatus: privacy,
-    },
-  };
-
   const res = await fetch(
     'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
     {
@@ -315,14 +214,16 @@ async function initiateResumableUpload({ accessToken, title, description, tags, 
         'X-Upload-Content-Type':   'video/mp4',
         'X-Upload-Content-Length': String(fileSize),
       },
-      body: JSON.stringify(metadata),
+      body: JSON.stringify({
+        snippet: { title, description, tags, categoryId: '28' },
+        status:  { privacyStatus: privacy },
+      }),
     }
   );
 
   if (!res.ok) {
     const errData = await res.json().catch(() => ({}));
-    const msg = errData?.error?.message || res.statusText;
-    throw new Error(`Failed to initiate upload (${res.status}): ${msg}`);
+    throw new Error(`Failed to initiate upload (${res.status}): ${errData?.error?.message || res.statusText}`);
   }
 
   const uploadUrl = res.headers.get('Location');
@@ -333,8 +234,8 @@ async function initiateResumableUpload({ accessToken, title, description, tags, 
 async function uploadInChunks({ uploadUrl, videoBlob, container }) {
   const progressBar   = container.querySelector('#yt-progress-bar');
   const progressLabel = container.querySelector('#yt-progress-label');
-  const total = videoBlob.size;
-  let offset  = 0;
+  const total  = videoBlob.size;
+  let   offset = 0;
 
   while (offset < total) {
     const end   = Math.min(offset + CHUNK_SIZE, total);
@@ -349,8 +250,6 @@ async function uploadInChunks({ uploadUrl, videoBlob, container }) {
       body: chunk,
     });
 
-    // 308 = Resume Incomplete (more chunks needed)
-    // 200/201 = complete
     if (res.status === 308) {
       offset = end;
       const pct = Math.round((offset / total) * 100);
@@ -360,13 +259,11 @@ async function uploadInChunks({ uploadUrl, videoBlob, container }) {
     } else if (res.status === 200 || res.status === 201) {
       progressBar.style.width = '100%';
       progressLabel.textContent = 'Upload complete!';
-      const data = await res.json();
-      return data.id;
+      return (await res.json()).id;
 
     } else {
       const errData = await res.json().catch(() => ({}));
-      const msg = errData?.error?.message || res.statusText;
-      throw new Error(`Upload chunk failed (${res.status}): ${msg}`);
+      throw new Error(`Upload chunk failed (${res.status}): ${errData?.error?.message || res.statusText}`);
     }
   }
 
@@ -381,5 +278,5 @@ const successBar = (msg) => `<div class="status-bar success">${msg}</div>`;
 const mb         = (bytes) => (bytes / 1024 / 1024).toFixed(1);
 
 function esc(str) {
-  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }

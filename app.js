@@ -1,7 +1,8 @@
-import { renderTopics }  from './components/topics.js';
-import { renderScript }  from './components/script.js';
-import { renderHeyGen }  from './components/heygen.js';
-import { renderYouTube } from './components/youtube.js';
+import { renderTopics }   from './components/topics.js';
+import { renderScript }   from './components/script.js';
+import { renderHeyGen }   from './components/heygen.js';
+import { renderYouTube }  from './components/youtube.js';
+import { renderSettings, getSettings } from './components/settings.js';
 
 // ── Tab routing ──────────────────────────────────────────────────────────────
 
@@ -19,15 +20,31 @@ tabBtns.forEach(btn => {
 
 // ── Mount components ─────────────────────────────────────────────────────────
 
-const topicsPanel = document.getElementById('tab-topics');
-const scriptPanel = document.getElementById('tab-script');
-const videoPanel  = document.getElementById('tab-video');
-const uploadPanel = document.getElementById('tab-upload');
+const topicsPanel   = document.getElementById('tab-topics');
+const scriptPanel   = document.getElementById('tab-script');
+const videoPanel    = document.getElementById('tab-video');
+const uploadPanel   = document.getElementById('tab-upload');
+const settingsPanel = document.getElementById('tab-settings');
 
 renderTopics(topicsPanel, onTopicSelect);
-renderScript(scriptPanel, () => {});
+renderScript(scriptPanel);
 renderHeyGen(videoPanel);
 renderYouTube(uploadPanel);
+renderSettings(settingsPanel);
+
+// ── Settings dot (red = required credentials missing) ────────────────────────
+
+const dot = document.getElementById('settings-dot');
+
+function updateSettingsDot() {
+  const s = getSettings();
+  const missing = !s.heygenApiKey || !s.heygenAvatarId || !s.heygenVoiceId
+               || !s.ytClientId   || !s.ytClientSecret  || !s.ytRefreshToken;
+  dot.style.display = missing ? 'block' : 'none';
+}
+
+updateSettingsDot();
+document.addEventListener('settings-changed', updateSettingsDot);
 
 // ── Auto-pipeline event chain ─────────────────────────────────────────────────
 
