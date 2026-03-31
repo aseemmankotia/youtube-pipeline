@@ -99,7 +99,15 @@ async function startGeneration(container) {
   btn.innerHTML = '<span class="loader"></span><span>Submitting…</span>';
 
   try {
-    const videoId = await submitJob({ apiKey, avatarId, voiceId, script });
+    const cleanedScript = stripMarkdown(script);
+    const chunks = splitIntoChunks(cleanedScript);
+    statusEl.innerHTML = info(
+      chunks.length > 1
+        ? `Splitting script into ${chunks.length} parts…`
+        : 'Submitting script…'
+    );
+
+    const videoId = await submitJob({ apiKey, avatarId, voiceId, chunks });
     statusEl.innerHTML = info(`Job submitted — Video ID: <code>${videoId}</code>`);
     progressCard.style.display = 'block';
     await pollUntilDone({ apiKey, videoId, script, container });
@@ -112,9 +120,9 @@ async function startGeneration(container) {
   }
 }
 
-async function submitJob({ apiKey, avatarId, voiceId, script }) {
+async function submitJob({ apiKey, avatarId, voiceId, chunks }) {
   const payload = {
-    video_inputs: [{
+    video_inputs: chunks.map(chunk => ({
       character: {
         type: 'avatar',
         avatar_id: avatarId,
@@ -122,10 +130,10 @@ async function submitJob({ apiKey, avatarId, voiceId, script }) {
       },
       voice: {
         type: 'text',
-        input_text: script,
+        input_text: chunk,
         voice_id: voiceId,
       },
-    }],
+    })),
     dimension: { width: 1280, height: 720 },
   };
 
@@ -216,6 +224,55 @@ async function pollUntilDone({ apiKey, videoId, script, container }) {
     };
     setTimeout(poll, POLL_INTERVAL_MS);
   });
+}
+
+// ── Script helpers ────────────────────────────────────────────────────────────
+
+/**
+ * Remove markdown symbols that HeyGen would speak aloud verbatim.
+ */
+function stripMarkdown(text) {
+  return text
+    .replace(/^#{1,6}\s*/gm, '')        // headings
+    .replace(/\*{1,3}([^*]+)\*{1,3}/g, '$1')  // bold / italic
+    .replace(/_{1,2}([^_]+)_{1,2}/g, '$1')    // underscores
+    .replace(/^\s*[-*]{3,}\s*$/gm, '')  // horizontal rules
+    .replace(/`{1,3}[^`]*`{1,3}/g, '')  // inline code / fences
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')  // links → text
+    .replace(/^\s*>\s*/gm, '')          // blockquotes
+    .replace(/\n{3,}/g, '\n\n')         // collapse excess blank lines
+    .trim();
+}
+
+const CHUNK_MAX = 4500;
+
+/**
+ * Split text into ≤ CHUNK_MAX-char chunks, breaking only at sentence ends.
+ */
+function splitIntoChunks(text) {
+  if (text.length <= CHUNK_MAX) return [text];
+
+  const chunks = [];
+  let remaining = text;
+
+  while (remaining.length > CHUNK_MAX) {
+    // Find the last ". " or ".\n" at or before CHUNK_MAX
+    let cutAt = -1;
+    for (let i = CHUNK_MAX; i > 0; i--) {
+      if (remaining[i] === '.' && (remaining[i + 1] === ' ' || remaining[i + 1] === '\n' || i + 1 === remaining.length)) {
+        cutAt = i + 1;
+        break;
+      }
+    }
+    // No sentence boundary found — hard cut at CHUNK_MAX
+    if (cutAt === -1) cutAt = CHUNK_MAX;
+
+    chunks.push(remaining.slice(0, cutAt).trim());
+    remaining = remaining.slice(cutAt).trim();
+  }
+
+  if (remaining.length > 0) chunks.push(remaining);
+  return chunks;
 }
 
 const err  = (msg) => `<div class="status-bar error">${msg}</div>`;
