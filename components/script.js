@@ -131,7 +131,8 @@ async function generateScript(container) {
 
     // Wire "send to video" button — dispatches a custom event
     container.querySelector('#send-to-video-btn').onclick = () => {
-      document.dispatchEvent(new CustomEvent('send-to-video', { detail: { script } }));
+      const topic = container.querySelector('#script-topic').value.trim();
+      document.dispatchEvent(new CustomEvent('send-to-video', { detail: { script, topic } }));
     };
 
   } catch (err) {

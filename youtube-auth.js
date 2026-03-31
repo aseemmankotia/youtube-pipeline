@@ -27,7 +27,7 @@ const path  = require('path');
 
 const SECRETS_FILE = path.join(__dirname, 'client_secrets.json');
 const TOKEN_FILE   = path.join(__dirname, 'youtube-token.json');
-const REDIRECT_URI = 'http://localhost:8080/oauth2callback';
+const REDIRECT_URI = 'http://localhost:8080';
 const SCOPES = [
   'https://www.googleapis.com/auth/youtube.upload',
   'https://www.googleapis.com/auth/youtube',
@@ -75,7 +75,7 @@ const SCOPES = [
     const server = http.createServer((req, res) => {
       const parsed = url.parse(req.url, true);
 
-      if (parsed.pathname !== '/oauth2callback') {
+      if (parsed.pathname !== '/' && parsed.pathname !== '') {
         res.writeHead(404);
         res.end('Not found');
         return;

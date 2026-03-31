@@ -62,10 +62,11 @@ export function renderHeyGen(container) {
     </div>
   `;
 
-  // Setter used by app.js auto-pipeline
+  // Setters used by app.js auto-pipeline
   container._setScript = (script) => {
     container.querySelector('#hg-script').value = script || '';
   };
+  container._topic = '';
 
   container.querySelector('#generate-video-btn')
     .addEventListener('click', () => startGeneration(container));
@@ -78,8 +79,9 @@ export function renderHeyGen(container) {
 
   // Auto-start when script arrives from Step 2 (if credentials already filled)
   document.addEventListener('send-to-video', (e) => {
-    const script = e.detail?.script;
+    const { script, topic } = e.detail || {};
     if (script) container._setScript(script);
+    if (topic)  container._topic = topic;
     const apiKey   = container.querySelector('#hg-api-key').value.trim();
     const avatarId = container.querySelector('#hg-avatar-id').value.trim();
     const voiceId  = container.querySelector('#hg-voice-id').value.trim();
@@ -116,7 +118,7 @@ async function startGeneration(container) {
     const videoId = await submitJob({ apiKey, avatarId, voiceId, script });
     statusEl.innerHTML = info(`Job submitted — Video ID: <code>${videoId}</code>`);
     progressCard.style.display = 'block';
-    await pollUntilDone({ apiKey, videoId, container });
+    await pollUntilDone({ apiKey, videoId, script, container });
   } catch (e) {
     statusEl.innerHTML = err(escHtml(e.message));
     retryBtn.style.display = 'inline-flex';
@@ -160,7 +162,7 @@ async function submitJob({ apiKey, avatarId, voiceId, script }) {
   return videoId;
 }
 
-async function pollUntilDone({ apiKey, videoId, container }) {
+async function pollUntilDone({ apiKey, videoId, script, container }) {
   const progressBar   = container.querySelector('#hg-progress-bar');
   const progressLabel = container.querySelector('#hg-progress-label');
   const progressCard  = container.querySelector('#hg-progress-card');
@@ -209,7 +211,7 @@ async function pollUntilDone({ apiKey, videoId, container }) {
           container.querySelector('#hg-download-btn').href = videoUrl;
           resultCard.style.display = 'block';
           statusEl.innerHTML = `<div class="status-bar success">Video ready!</div>`;
-          document.dispatchEvent(new CustomEvent('video-complete', { detail: { videoUrl, videoId } }));
+          document.dispatchEvent(new CustomEvent('video-complete', { detail: { videoUrl, videoId, script, topic: container._topic } }));
           resolve(videoUrl);
 
         } else if (status === 'failed') {
