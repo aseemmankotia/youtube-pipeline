@@ -170,9 +170,10 @@ Output only the script text, no meta-commentary.`;
       'Content-Type': 'application/json',
       'x-api-key': apiKey,
       'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
     },
     body: JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'claude-opus-4-5',
       max_tokens: 4096,
       messages: [{ role: 'user', content: prompt }],
     }),
