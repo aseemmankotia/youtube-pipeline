@@ -72,6 +72,20 @@ export function renderHistory(container) {
         render();
       }
     });
+
+    container.querySelectorAll('.copy-desc-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const text = btn.dataset.desc;
+        try {
+          await navigator.clipboard.writeText(text);
+          const orig = btn.textContent;
+          btn.textContent = 'Copied!';
+          setTimeout(() => { btn.textContent = orig; }, 1500);
+        } catch {
+          prompt('Copy this description:', text);
+        }
+      });
+    });
   }
 
   render();
@@ -92,6 +106,9 @@ function renderCard(entry) {
   const ytBtn = entry.youtubeUrl
     ? `<a href="${entry.youtubeUrl}" target="_blank" rel="noopener" class="btn btn-success history-link">View on YouTube</a>`
     : '';
+  const descBtn = entry.description
+    ? `<button class="btn btn-secondary history-link copy-desc-btn" data-desc="${escHtml(entry.description)}">Copy Description</button>`
+    : '';
 
   return `
     <div class="history-card">
@@ -103,7 +120,7 @@ function renderCard(entry) {
       ${entry.scriptExcerpt
         ? `<div class="history-excerpt">${escHtml(entry.scriptExcerpt.slice(0, 200))}${entry.scriptExcerpt.length > 200 ? '…' : ''}</div>`
         : ''}
-      ${videoBtn || ytBtn ? `<div class="history-actions">${videoBtn}${ytBtn}</div>` : ''}
+      ${videoBtn || ytBtn || descBtn ? `<div class="history-actions">${videoBtn}${ytBtn}${descBtn}</div>` : ''}
     </div>
   `;
 }

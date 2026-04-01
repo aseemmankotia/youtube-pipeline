@@ -64,12 +64,14 @@ document.addEventListener('send-to-video', (e) => {
 });
 
 // Step 3 complete: save history entry + log to Sheets
-document.addEventListener('video-complete', (e) => {
+document.addEventListener('video-complete', async (e) => {
   const { videoUrl, videoId, script, topic } = e.detail || {};
 
-  // Hand off to upload tab
-  if (uploadPanel._setVideoData) uploadPanel._setVideoData({ videoUrl, script, topic });
+  // Hand off to upload tab (await so description is generated before we read it)
+  if (uploadPanel._setVideoData) await uploadPanel._setVideoData({ videoUrl, script, topic });
   switchTab('upload');
+
+  const description = uploadPanel._generatedDescription || '';
 
   // Save initial history entry (status: generated)
   saveHistoryEntry({
@@ -77,6 +79,7 @@ document.addEventListener('video-complete', (e) => {
     heygenVideoUrl: videoUrl || '',
     topic:          topic || '',
     scriptExcerpt:  (script || '').slice(0, 500),
+    description,
     status:         'generated',
     createdAt:      new Date().toISOString(),
   });
@@ -96,11 +99,12 @@ document.addEventListener('upload-complete', (e) => {
   const { videoId: ytVideoId, ytUrl, youtubeTitle, heygenVideoId, heygenVideoUrl } = e.detail || {};
   const topic = youtubeTitle || '';
 
-  // Update existing history entry to uploaded
+  // Update existing history entry to uploaded (preserve description already saved)
   if (heygenVideoId) {
     updateHistoryByHeygenId(heygenVideoId, {
-      youtubeUrl: ytUrl || '',
-      status:     'uploaded',
+      youtubeUrl:  ytUrl || '',
+      status:      'uploaded',
+      description: uploadPanel._generatedDescription || '',
     });
   }
 

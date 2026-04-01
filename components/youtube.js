@@ -102,19 +102,19 @@ export function renderYouTube(container) {
   container._heygenVideoId  = '';
   container._heygenVideoUrl = '';
 
-  document.addEventListener('video-complete', (e) => {
+  document.addEventListener('video-complete', async (e) => {
     const { videoUrl, videoId, script, topic } = e.detail || {};
     if (videoUrl) container.querySelector('#yt-video-url').value = videoUrl;
     if (videoId)  container._heygenVideoId  = videoId;
     if (videoUrl) container._heygenVideoUrl = videoUrl;
-    if (script)   fillMetadata(container, script, topic);
+    if (script)   await fillMetadata(container, script, topic);
     const { ytClientId, ytClientSecret, ytRefreshToken } = getSettings();
     if (ytClientId && ytClientSecret && ytRefreshToken) startUpload(container);
   });
 
-  container._setVideoData = ({ videoUrl, script, topic } = {}) => {
+  container._setVideoData = async ({ videoUrl, script, topic } = {}) => {
     if (videoUrl) container.querySelector('#yt-video-url').value = videoUrl;
-    if (script)   fillMetadata(container, script, topic);
+    if (script)   await fillMetadata(container, script, topic);
   };
 }
 
@@ -131,29 +131,136 @@ function stripMd(str) {
     .trim();
 }
 
-function fillMetadata(container, script, topic) {
-  // Title: prefer topic, fall back to first meaningful script line
-  const cleanTopic = stripMd(topic || '');
-  const firstScriptLine = script.split('\n')
+function toTitleCase(str) {
+  const minors = new Set(['a','an','the','and','but','or','for','nor','on','at','to','by','in','of','up','as','is']);
+  return str.replace(/\w+/g, (word, offset) => {
+    if (offset > 0 && minors.has(word.toLowerCase())) return word.toLowerCase();
+    return word.charAt(0).toUpperCase() + word.slice(1);
+  });
+}
+
+/** Try to load slide sections from render-input.json in the same origin */
+async function loadSlideSections() {
+  try {
+    const res = await fetch('./render-input.json');
+    if (!res.ok) return null;
+    const data = await res.json();
+    // sections may have been stored alongside the input (not standard, fallback null)
+    return Array.isArray(data.sections) ? data.sections : null;
+  } catch { return null; }
+}
+
+/** Extract section headings from script markdown (lines starting with #) */
+function extractHeadingsFromScript(script) {
+  return script.split('\n')
+    .filter(l => /^#{1,3}\s/.test(l))
     .map(l => stripMd(l))
-    .find(l => l.length > 5) || '';
-  const title = (cleanTopic || firstScriptLine || 'My YouTube Video').slice(0, 100);
+    .filter(Boolean)
+    .slice(0, 8);
+}
 
-  // Description: first 3 sentences from script + hashtags
-  const sentences = script.replace(/\n+/g, ' ').match(/[^.!?]+[.!?]+/g) || [];
-  const descBody  = sentences.slice(0, 3).map(s => stripMd(s)).join(' ').trim();
-  const topicWords = (topic || '').split(/\W+/).filter(w => w.length >= 3).slice(0, 5);
-  const hashtags  = topicWords.map(w => `#${w}`).join(' ');
-  const description = [descBody, hashtags].filter(Boolean).join('\n\n');
+/** Estimate word-per-second timestamps for sections */
+function buildTimestamps(sections, script) {
+  const totalWords = script.split(/\s+/).filter(Boolean).length;
+  const totalSecs  = Math.round(totalWords / 150 * 60); // 150 wpm
+  const count      = sections.length;
+  const lines = ['0:00 - Intro'];
+  for (let i = 1; i < count; i++) {
+    const secs = Math.round((i / count) * totalSecs);
+    const m = Math.floor(secs / 60);
+    const s = String(secs % 60).padStart(2, '0');
+    lines.push(`${m}:${s} - ${sections[i]}`);
+  }
+  return lines;
+}
 
-  // Tags from topic words
-  const tags = [...new Set(
-    (topic || '').split(/\W+/).filter(w => w.length >= 3 && w.length <= 20)
-  )].slice(0, 10).join(', ');
+/** Extract keyword tags from script + topic */
+function extractKeywords(script, topic) {
+  const stopWords = new Set([
+    'the','and','for','that','this','with','have','from','they','will','been','their',
+    'what','when','where','which','there','about','would','could','should','your','you',
+    'are','was','were','has','had','not','but','all','any','can','its','our','more',
+    'also','just','like','into','than','then','some','over','such','use','used',
+  ]);
+  const text = `${topic} ${script}`;
+  const freq = {};
+  const words = text.match(/\b[A-Za-z]{4,}\b/g) || [];
+  for (const w of words) {
+    const lw = w.toLowerCase();
+    if (!stopWords.has(lw)) freq[lw] = (freq[lw] || 0) + 1;
+  }
+  return Object.entries(freq)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 15)
+    .map(([w]) => w.charAt(0).toUpperCase() + w.slice(1));
+}
+
+async function fillMetadata(container, script, topic) {
+  // ── Title ──────────────────────────────────────────────────────────────────
+  const year      = new Date().getFullYear();
+  const cleanRaw  = stripMd(topic || '').trim() ||
+    script.split('\n').map(l => stripMd(l)).find(l => l.length > 5) || 'My Video';
+  const titleBase = toTitleCase(cleanRaw.replace(/[*_`#]/g, '').trim());
+  const title     = `${titleBase} (${year})`.slice(0, 80);
+
+  // ── Hook: first 2 sentences from cleaned script ────────────────────────────
+  const plainScript = script.replace(/\n+/g, ' ');
+  const allSentences = plainScript.match(/[^.!?]+[.!?]+/g) || [];
+  const hook = allSentences.slice(0, 2).map(s => stripMd(s).trim()).join(' ').trim();
+
+  // ── Section bullets ────────────────────────────────────────────────────────
+  const slideSections = await loadSlideSections();
+  let sectionTitles;
+  if (slideSections && slideSections.length > 0) {
+    sectionTitles = slideSections.map(s => (typeof s === 'string' ? s : s.title)).filter(Boolean);
+  } else {
+    sectionTitles = extractHeadingsFromScript(script);
+  }
+  // Fall back to word-frequency chunks if no headings found
+  if (sectionTitles.length === 0) {
+    const wordCount = plainScript.split(/\s+/).length;
+    const estMins   = Math.round(wordCount / 150);
+    sectionTitles   = [`Introduction`, `Main Content (${estMins} min)`, `Conclusion`];
+  }
+  const bulletList = sectionTitles.map(t => `• ${t}`).join('\n');
+
+  // ── Timestamps ────────────────────────────────────────────────────────────
+  const timestamps = buildTimestamps(sectionTitles, script);
+
+  // ── Keywords / tags ───────────────────────────────────────────────────────
+  const keywords = extractKeywords(script, topic || '');
+  const hashtagLine = keywords.slice(0, 8).map(k => `#${k}`).join(' ');
+  const tagsValue   = keywords.join(', ');
+
+  // ── Niche line ────────────────────────────────────────────────────────────
+  const nicheWord = stripMd(topic || 'AI & Technology').split(/\s+/).slice(0, 3).join(' ');
+
+  // ── Assemble description ───────────────────────────────────────────────────
+  const description = [
+    hook,
+    '',
+    'In this video:',
+    bulletList,
+    '',
+    '⏱️ Timestamps:',
+    timestamps.join('\n'),
+    '',
+    `🔔 Subscribe for weekly videos on ${nicheWord}`,
+    '👍 Like if you found this helpful!',
+    '',
+    '📌 Topics covered:',
+    hashtagLine,
+    '',
+    '---',
+    'Generated with AI | Script by Claude | Avatar by HeyGen',
+  ].join('\n');
 
   container.querySelector('#yt-title').value       = title;
   container.querySelector('#yt-description').value = description;
-  container.querySelector('#yt-tags').value        = tags;
+  container.querySelector('#yt-tags').value        = tagsValue;
+
+  // Expose description so app.js can save it to history
+  container._generatedDescription = description;
 }
 
 // ── Upload flow ───────────────────────────────────────────────────────────────
