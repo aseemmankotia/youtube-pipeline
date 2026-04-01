@@ -442,7 +442,7 @@ async function composite(ffmpeg, ffprobe, sections, heygenPath, outPath) {
     `-filter_complex ` +
       `"[0:v]scale=1280:720[bg];` +
        `[1:v]scale=${PIP_WIDTH}:-2[av_scaled];` +
-       `[av_scaled]pad=w+6:h+6:3:3:color=white[av_bordered];` +
+       `[av_scaled]pad=iw+6:ih+6:3:3:color=white[av_bordered];` +
        `[bg][av_bordered]overlay=${overlayExpr}" ` +
     `-c:v libx264 -crf 22 -preset medium -pix_fmt yuv420p ` +
     `${audioArgs} ` +
