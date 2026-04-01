@@ -435,13 +435,34 @@ async function composite(ffmpeg, ffprobe, sections, heygenPath, outPath) {
   //   [1:v] scale avatar to PIP_WIDTH wide, auto height     → [av_scaled]
   //         pad with 3px white border on all sides          → [av_bordered]
   //   overlay [av_bordered] onto [bg] at chosen position    → output
+  // Detect avatar aspect ratio to decide whether to crop before scaling.
+  // Portrait videos (height > width, e.g. 1080×1920 from HeyGen) are cropped
+  // to a 16:9 head-and-shoulders window from the top before PIP scaling.
+  // Landscape videos are scaled directly.
+  let probeOut;
+  try {
+    probeOut = execSync(
+      `"${ffprobe}" -v error -select_streams v:0 ` +
+      `-show_entries stream=width,height -of csv=p=0 "${heygenPath}"`,
+      { encoding: 'utf8', stdio: ['pipe','pipe','pipe'] }
+    ).trim();
+  } catch { probeOut = ''; }
+  const [avW, avH] = probeOut.split(',').map(Number);
+  const isPortrait = avH > avW;
+
+  // For portrait: crop top 16:9 slice (shows head + shoulders), then scale.
+  // crop=w:h:x:y  — take full width, height = w*(9/16), starting at top.
+  const pipScaleFilter = isPortrait
+    ? `[1:v]crop=iw:iw*9/16:0:0[av_crop];[av_crop]scale=${PIP_WIDTH}:-2[av_scaled]`
+    : `[1:v]scale=${PIP_WIDTH}:-2[av_scaled]`;
+
   execSync(
     `"${ffmpeg}" -y ` +
     `-i "${slideshowPath}" ` +
     `-i "${heygenPath}" ` +
     `-filter_complex ` +
       `"[0:v]scale=1280:720[bg];` +
-       `[1:v]scale=${PIP_WIDTH}:-2[av_scaled];` +
+       `${pipScaleFilter};` +
        `[av_scaled]pad=iw+6:ih+6:3:3:color=white[av_bordered];` +
        `[bg][av_bordered]overlay=${overlayExpr}" ` +
     `-c:v libx264 -crf 22 -preset medium -pix_fmt yuv420p ` +
