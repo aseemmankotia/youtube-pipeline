@@ -183,19 +183,25 @@ textarea { resize: vertical; min-height: 120px; }
 /* Topic cards */
 .topics-grid {
   display: grid;
-  gap: 12px;
-  margin-top: 20px;
+  gap: 10px;
+}
+
+.topics-scroll {
+  max-height: 600px;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
 }
 
 .topic-item {
   background: var(--surface2);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 16px;
+  padding: 12px 14px;
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s;
 }
@@ -203,18 +209,31 @@ textarea { resize: vertical; min-height: 120px; }
 .topic-item:hover { border-color: var(--accent); background: #1f1f1f; }
 .topic-item.selected { border-color: var(--accent); background: #2a1010; }
 
-.topic-content { flex: 1; }
-.topic-title { font-weight: 600; margin-bottom: 4px; }
-.topic-desc { font-size: 0.85rem; color: var(--muted); }
+.topic-number {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--muted);
+  min-width: 24px;
+  padding-top: 2px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.topic-content { flex: 1; min-width: 0; }
+.topic-title { font-weight: 600; margin-bottom: 3px; font-size: 0.92rem; }
+.topic-desc { font-size: 0.82rem; color: var(--muted); }
 
 .topic-badge {
   background: var(--accent);
   color: #fff;
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   font-weight: 700;
   padding: 3px 8px;
   border-radius: 20px;
   white-space: nowrap;
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 2px;
 }
 
 /* Script output */
