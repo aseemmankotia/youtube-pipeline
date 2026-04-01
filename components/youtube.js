@@ -384,7 +384,7 @@ async function initiateResumableUpload({ accessToken, title, description, tags, 
       },
       body: JSON.stringify({
         snippet: { title, description, tags, categoryId: '28' },
-        status:  { privacyStatus: privacy },
+        status:  { privacyStatus: privacy, selfDeclaredMadeForKids: false },
       }),
     }
   );
