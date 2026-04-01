@@ -36,7 +36,8 @@ const TEMP_DIR   = path.join(__dirname, 'temp');
 
 // ── PIP configuration ──────────────────────────────────────────────────────────
 // Avatar width in pixels (height auto-calculated to preserve aspect ratio).
-const PIP_WIDTH = 320;
+const PIP_WIDTH    = 320;  // landscape avatar: scale to this width
+const PIP_HEIGHT   = 360;  // portrait avatar: scale to this height (full body visible)
 
 // Position of the avatar overlay. Options:
 //   "bottom-right"  (default) — corner away from most slide content
@@ -452,10 +453,11 @@ async function composite(ffmpeg, ffprobe, sections, heygenPath, outPath) {
   const [avW, avH] = probeOut.split(',').map(Number);
   const isPortrait = avH > avW;
 
-  // For portrait: crop top 16:9 slice (shows head + shoulders), then scale.
-  // crop=w:h:x:y  — take full width, height = w*(9/16), starting at top.
+  // For portrait (e.g. 1080×1920 HeyGen): scale to PIP_HEIGHT tall, auto width.
+  // No crop — keep the full body visible.
+  // For landscape: scale to PIP_WIDTH wide, auto height.
   const pipScaleFilter = isPortrait
-    ? `[1:v]crop=iw:iw*9/16:0:0[av_crop];[av_crop]scale=${PIP_WIDTH}:-2[av_scaled]`
+    ? `[1:v]scale=-2:${PIP_HEIGHT}[av_scaled]`
     : `[1:v]scale=${PIP_WIDTH}:-2[av_scaled]`;
 
   execSync(
