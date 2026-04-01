@@ -34,6 +34,16 @@ const INPUT_FILE = path.join(__dirname, 'render-input.json');
 const SLIDES_DIR = path.join(__dirname, 'slides');
 const TEMP_DIR   = path.join(__dirname, 'temp');
 
+// ── PIP configuration ──────────────────────────────────────────────────────────
+// Avatar width in pixels (height auto-calculated to preserve aspect ratio).
+const PIP_WIDTH = 320;
+
+// Position of the avatar overlay. Options:
+//   "bottom-right"  (default) — corner away from most slide content
+//   "bottom-left"
+//   "top-right"
+const PIP_POSITION = 'bottom-right';
+
 // ── Entry point ────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -219,7 +229,7 @@ body{
   font-family:'Inter',system-ui,sans-serif;
   color:#fff;overflow:hidden;position:relative;
 }
-/* Subtle grid */
+/* Subtle grid — full canvas */
 body::before{
   content:'';position:absolute;inset:0;
   background-image:
@@ -227,31 +237,27 @@ body::before{
     linear-gradient(90deg,rgba(255,255,255,.04) 1px,transparent 1px);
   background-size:48px 48px;pointer-events:none;
 }
-/* Right-side gradient (avatar zone) */
-body::after{
-  content:'';position:absolute;inset:0;
-  background:linear-gradient(90deg,transparent 48%,#0d0d0d 65%,#0d0d0d 100%);
-  pointer-events:none;
-}
-.left{
+/* Content area — full width, avatar overlays on top via FFmpeg */
+.content{
   position:absolute;left:0;top:0;
-  width:768px;height:720px;
-  padding:64px 56px;
+  width:1280px;height:720px;
+  padding:72px 80px;
   display:flex;flex-direction:column;justify-content:center;
   z-index:1;
 }
 .section-label{
-  font-size:11px;font-weight:700;letter-spacing:5px;
-  color:#ff4444;text-transform:uppercase;margin-bottom:20px;
+  font-size:12px;font-weight:700;letter-spacing:5px;
+  color:#ff4444;text-transform:uppercase;margin-bottom:22px;
 }
 .title{
-  font-size:46px;font-weight:800;line-height:1.1;
-  color:#fff;margin-bottom:28px;letter-spacing:-0.5px;
+  font-size:54px;font-weight:800;line-height:1.08;
+  color:#fff;margin-bottom:32px;letter-spacing:-1px;
+  max-width:900px;
 }
-ul.bullets{list-style:none;margin-bottom:26px;}
+ul.bullets{list-style:none;margin-bottom:28px;}
 ul.bullets li{
-  font-size:20px;color:#b8b8b8;line-height:1.5;
-  margin-bottom:13px;padding-left:24px;position:relative;
+  font-size:24px;color:#c0c0c0;line-height:1.5;
+  margin-bottom:14px;padding-left:28px;position:relative;
 }
 ul.bullets li::before{
   content:'—';position:absolute;left:0;color:#ff4444;font-weight:700;
@@ -259,20 +265,20 @@ ul.bullets li::before{
 .stat{
   background:rgba(255,68,68,.09);
   border-left:3px solid #ff4444;
-  padding:14px 18px;border-radius:0 6px 6px 0;
-  font-size:18px;font-weight:600;color:#ff6b6b;
-  font-style:italic;line-height:1.45;
+  padding:16px 22px;border-radius:0 6px 6px 0;
+  font-size:21px;font-weight:600;color:#ff6b6b;
+  font-style:italic;line-height:1.45;max-width:820px;
 }
 .progress{
-  position:absolute;bottom:26px;left:56px;
-  display:flex;align-items:center;gap:7px;z-index:2;
+  position:absolute;bottom:30px;left:80px;
+  display:flex;align-items:center;gap:8px;z-index:2;
 }
-.dot{width:7px;height:7px;border-radius:50%;background:#272727;}
-.dot.active{width:26px;border-radius:4px;background:#ff4444;}
+.dot{width:7px;height:7px;border-radius:50%;background:#2a2a2a;}
+.dot.active{width:28px;border-radius:4px;background:#ff4444;}
 </style>
 </head>
 <body>
-<div class="left">
+<div class="content">
   <div class="section-label">Section ${index + 1} of ${total}</div>
   <h1 class="title">${escHtml(section.title)}</h1>
   <ul class="bullets">
@@ -417,20 +423,33 @@ async function composite(ffmpeg, ffprobe, sections, heygenPath, outPath) {
     ? `-c:a aac -b:a 192k -map 0:v -map 1:a`
     : `-map 0:v -an`;
 
+  // Resolve overlay expression from PIP_POSITION
+  const overlayExpr = {
+    'bottom-right': 'W-w-20:H-h-20',
+    'bottom-left':  '20:H-h-20',
+    'top-right':    'W-w-20:20',
+  }[PIP_POSITION] || 'W-w-20:H-h-20';
+
+  // filter_complex:
+  //   [0:v] scale slide to 1280×720                         → [bg]
+  //   [1:v] scale avatar to PIP_WIDTH wide, auto height     → [av_scaled]
+  //         pad with 3px white border on all sides          → [av_bordered]
+  //   overlay [av_bordered] onto [bg] at chosen position    → output
   execSync(
     `"${ffmpeg}" -y ` +
     `-i "${slideshowPath}" ` +
     `-i "${heygenPath}" ` +
     `-filter_complex ` +
-      `"[1:v]scale=380:214,` +
-       `pad=386:220:3:3:color=white[avatar];` +
-       `[0:v][avatar]overlay=884:490" ` +
+      `"[0:v]scale=1280:720[bg];` +
+       `[1:v]scale=${PIP_WIDTH}:-2[av_scaled];` +
+       `[av_scaled]pad=w+6:h+6:3:3:color=white[av_bordered];` +
+       `[bg][av_bordered]overlay=${overlayExpr}" ` +
     `-c:v libx264 -crf 22 -preset medium -pix_fmt yuv420p ` +
     `${audioArgs} ` +
     `"${outPath}"`,
     { stdio: 'pipe' }
   );
-  log(`   ✓ ${path.basename(outPath)} written`);
+  log(`   ✓ ${path.basename(outPath)} written (PIP: ${PIP_POSITION}, ${PIP_WIDTH}px wide)`);
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
