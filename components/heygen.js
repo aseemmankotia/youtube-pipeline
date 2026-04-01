@@ -1,346 +1,344 @@
 /**
- * HeyGen Video Generation Component — Step 3
- * Credentials are read from Settings tab via getSettings().
+ * HeyGen Video Generation Component — Step 3 (Hybrid Manual Workflow)
+ *
+ * Stage A — Copy cleaned script → paste into heygen.com manually
+ * Stage B — Upload the MP4 you downloaded from HeyGen
+ * Stage C — Optional: run render.js locally to add slides (PIP)
  */
 
-import { getSettings }  from './settings.js';
+import { getSettings } from './settings.js';
 import { cleanScript }  from './clean-script.js';
-
-const POLL_INTERVAL_MS = 10_000;
 
 export function renderHeyGen(container) {
   container.innerHTML = `
+
+    <!-- ── Stage A: Copy Script ───────────────────────────────────────────── -->
     <div class="card">
-      <h2>Generate Video</h2>
+      <h2>Step 1 — Copy Script for HeyGen</h2>
+      <p style="font-size:0.88rem;color:var(--muted);margin-bottom:16px;">
+        Markdown and stage directions have been stripped so the AI avatar
+        reads naturally. Copy, paste into HeyGen, and generate your video.
+      </p>
 
       <div class="form-group">
-        <label for="hg-script">Script</label>
-        <textarea id="hg-script" rows="8"
-          placeholder="Script auto-filled from Step 2, or paste manually…"></textarea>
+        <label for="hg-script">
+          Cleaned Script
+          <span style="color:var(--muted);font-weight:400;"> — ready to paste into HeyGen</span>
+        </label>
+        <textarea id="hg-script" rows="10" readonly
+          style="font-family:inherit;font-size:0.88rem;resize:vertical;
+                 background:var(--surface2);color:var(--text);"
+          placeholder="Script auto-filled from Step 2, or paste your raw script here…"></textarea>
       </div>
+
+      <div id="hg-script-meta" style="font-size:0.82rem;color:var(--muted);margin-bottom:14px;"></div>
 
       <div style="display:flex;gap:10px;flex-wrap:wrap;">
-        <button class="btn btn-primary" id="generate-video-btn">
-          <span>Generate Video</span>
-        </button>
-        <button class="btn btn-secondary" id="hg-retry-btn" style="display:none;">
-          Retry
-        </button>
+        <button class="btn btn-primary" id="hg-copy-btn">Copy Cleaned Script</button>
+        <a href="https://www.heygen.com" target="_blank" rel="noopener"
+          class="btn btn-secondary">Open HeyGen ↗</a>
       </div>
 
-      <div id="hg-status"></div>
-    </div>
-
-    <div id="hg-progress-card" style="display:none;" class="card">
-      <h2>Rendering Video…</h2>
-      <div class="progress-wrap">
-        <div class="progress-bar" id="hg-progress-bar"></div>
-      </div>
-      <p id="hg-progress-label" style="font-size:0.85rem;color:var(--muted);margin-top:8px;"></p>
-    </div>
-
-    <div id="hg-result-card" style="display:none;" class="card">
-      <h2>Video Ready</h2>
-      <video id="hg-video-player" controls style="width:100%;border-radius:8px;background:#000;"></video>
-      <div class="script-actions" style="margin-top:12px;">
-        <a class="btn btn-success" id="hg-download-btn" download="heygen-video.mp4">Download MP4</a>
+      <div class="status-bar info"
+        style="flex-direction:column;align-items:flex-start;gap:8px;margin-top:16px;padding:16px;">
+        <strong style="font-size:0.9rem;">How to generate your video on HeyGen:</strong>
+        <ol style="padding-left:20px;font-size:0.84rem;line-height:2.2;color:var(--text);">
+          <li>Click <strong>Copy Cleaned Script</strong> above</li>
+          <li>Go to <strong>heygen.com → Create Video → Talking Photo / Avatar</strong></li>
+          <li>Paste the script into the text box</li>
+          <li>Select your avatar and voice</li>
+          <li>Click <strong>Generate</strong> — takes 10–15 minutes</li>
+          <li>Download the MP4 when ready, then come back here ↓</li>
+        </ol>
       </div>
     </div>
 
-    <div id="hg-enhance-card" style="display:none;" class="card">
-      <h2>✨ Enhance with Slides</h2>
+    <!-- ── Stage B: Upload MP4 ───────────────────────────────────────────── -->
+    <div class="card">
+      <h2>Step 2 — Upload Your HeyGen Video</h2>
       <p style="font-size:0.88rem;color:var(--muted);margin-bottom:16px;">
-        Add animated slide backgrounds with your AI avatar as picture-in-picture.
-        Runs locally via Node.js — no upload required.
+        Drag and drop the MP4 you downloaded from HeyGen, or click to browse.
       </p>
-      <button class="btn btn-secondary" id="hg-enhance-btn">⬇ Download Render Files</button>
-      <div id="hg-enhance-instructions" style="display:none;margin-top:16px;">
-        <div class="status-bar info" style="flex-direction:column;align-items:flex-start;gap:10px;padding:16px;">
-          <strong style="font-size:0.9rem;">Files downloaded — follow these steps:</strong>
-          <ol style="padding-left:20px;font-size:0.84rem;line-height:2;color:var(--text);">
-            <li>Move <code>render-input.json</code> and <code>.env</code> into your <code>~/youtube-pipeline</code> folder</li>
-            <li>Open Terminal and run: <code style="background:#111;padding:2px 8px;border-radius:4px;">npm run render</code></li>
-            <li>Wait for <em>✅ Render complete</em>, then select the output file below</li>
-          </ol>
+
+      <div id="hg-drop-zone" class="drop-zone">
+        <input type="file" id="hg-file-input" accept=".mp4,video/mp4" style="display:none;">
+        <div class="drop-zone-inner">
+          <div style="font-size:2rem;margin-bottom:8px;">🎬</div>
+          <p style="font-weight:600;margin-bottom:4px;">Drop your HeyGen MP4 here</p>
+          <p style="font-size:0.83rem;color:var(--muted);">
+            or <button class="link-btn" id="hg-browse-btn" type="button">browse files</button>
+          </p>
         </div>
-        <div class="form-group" style="margin-top:16px;">
-          <label for="hg-enhanced-file">Select rendered video to send to YouTube upload</label>
-          <input type="file" id="hg-enhanced-file" accept=".mp4,video/*"
-            style="margin-top:8px;color:var(--text);font-size:0.88rem;" />
+      </div>
+
+      <div id="hg-file-info" style="display:none;margin-top:12px;">
+        <div style="display:flex;align-items:center;gap:12px;
+                    background:var(--surface2);border:1px solid var(--border);
+                    border-radius:var(--radius);padding:12px 16px;">
+          <span style="font-size:1.4rem;">🎞</span>
+          <div style="flex:1;min-width:0;">
+            <div id="hg-fname" style="font-weight:600;font-size:0.9rem;
+                 white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
+            <div id="hg-fsize" style="font-size:0.8rem;color:var(--muted);"></div>
+          </div>
+          <button class="btn btn-secondary" id="hg-file-clear"
+            style="padding:4px 10px;font-size:0.8rem;">✕ Clear</button>
         </div>
-        <div id="hg-enhanced-status" style="font-size:0.85rem;color:#7af57a;margin-top:8px;display:none;">
-          ✓ Enhanced video loaded — switching to Upload tab…
+
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;">
+          <button class="btn btn-primary" id="hg-enhance-btn">
+            ✨ Enhance with Slides
+          </button>
+          <button class="btn btn-success" id="hg-upload-direct-btn">
+            → Proceed to YouTube Upload
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Stage C: Rendering ────────────────────────────────────────────── -->
+    <div id="hg-render-card" style="display:none;" class="card">
+      <h2>Step 3 — Rendering with Slides</h2>
+      <p style="font-size:0.88rem;color:var(--muted);margin-bottom:16px;">
+        Run this command in your terminal — it uses FFmpeg + Puppeteer to
+        composite your slides as a background with the avatar as PIP.
+      </p>
+
+      <div style="background:#0a0a0a;border:1px solid var(--border);border-radius:6px;
+                  padding:14px 18px;font-family:monospace;font-size:0.92rem;
+                  display:flex;align-items:center;justify-content:space-between;gap:12px;
+                  margin-bottom:20px;">
+        <span style="color:#7af57a;">npm run render</span>
+        <button class="btn btn-secondary" id="hg-copy-cmd-btn"
+          style="font-size:0.78rem;padding:4px 10px;">Copy</button>
+      </div>
+
+      <ul class="render-steps" id="hg-render-steps">
+        <li class="render-step" data-step="0">
+          <span class="step-icon pending">○</span>
+          <span>Splitting script into sections</span>
+        </li>
+        <li class="render-step" data-step="1">
+          <span class="step-icon pending">○</span>
+          <span>Generating slides</span>
+        </li>
+        <li class="render-step" data-step="2">
+          <span class="step-icon pending">○</span>
+          <span>Rendering slides to images</span>
+        </li>
+        <li class="render-step" data-step="3">
+          <span class="step-icon pending">○</span>
+          <span>Compositing video</span>
+        </li>
+        <li class="render-step" data-step="4">
+          <span class="step-icon pending">○</span>
+          <span>Done!</span>
+        </li>
+      </ul>
+
+      <div style="margin-top:20px;padding-top:20px;border-top:1px solid var(--border);">
+        <label style="font-size:0.88rem;font-weight:600;display:block;margin-bottom:8px;">
+          When render is complete — select <code>final-video.mp4</code>:
+        </label>
+        <input type="file" id="hg-rendered-file" accept=".mp4,video/*"
+          style="color:var(--text);font-size:0.86rem;" />
+        <div id="hg-render-ready-status"
+          style="display:none;font-size:0.85rem;color:#7af57a;margin-top:8px;">
+          ✓ Rendered video loaded — proceeding to Upload tab…
         </div>
       </div>
     </div>
   `;
 
-  container._setScript = (script) => {
-    container.querySelector('#hg-script').value = script || '';
+  // ── State ──────────────────────────────────────────────────────────────────
+  container._topic      = '';
+  container._rawScript  = '';
+  container._videoId    = '';
+  container._fileObj    = null;   // File object from drop zone
+  container._fileObjUrl = '';     // Blob URL for the dropped file
+
+  // ── Stage A: populate script ───────────────────────────────────────────────
+  container._setScript = (rawScript) => {
+    container._rawScript = rawScript || '';
+    const cleaned = cleanScript(rawScript || '');
+    container.querySelector('#hg-script').value = cleaned;
+    updateScriptMeta(container, cleaned);
   };
-  container._topic   = '';
-  container._videoId = '';
 
-  container.querySelector('#generate-video-btn')
-    .addEventListener('click', () => startGeneration(container));
-
-  container.querySelector('#hg-retry-btn')
-    .addEventListener('click', () => {
-      container.querySelector('#hg-retry-btn').style.display = 'none';
-      startGeneration(container);
+  container.querySelector('#hg-copy-btn').addEventListener('click', () => {
+    const text = container.querySelector('#hg-script').value;
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(() => {
+      const btn = container.querySelector('#hg-copy-btn');
+      btn.textContent = 'Copied!';
+      setTimeout(() => { btn.textContent = 'Copy Cleaned Script'; }, 1800);
     });
-
-  // Enhance with Slides button — downloads render-input.json + .env
-  container.querySelector('#hg-enhance-btn').addEventListener('click', () => {
-    const renderInput = {
-      topic:            container._topic || '',
-      script:           container.querySelector('#hg-script').value.trim(),
-      heygen_video_url: container.querySelector('#hg-video-player').src,
-      output_filename:  'final-video.mp4',
-    };
-    triggerDownload(
-      JSON.stringify(renderInput, null, 2),
-      'render-input.json',
-      'application/json'
-    );
-
-    // Also download .env with the Anthropic API key from Settings
-    const { claudeApiKey } = getSettings();
-    if (claudeApiKey) {
-      triggerDownload(
-        `ANTHROPIC_API_KEY=${claudeApiKey}\n`,
-        '.env',
-        'text/plain'
-      );
-    }
-
-    container.querySelector('#hg-enhance-instructions').style.display = 'block';
   });
 
-  // File picker — load rendered MP4 and send to Tab 4
-  container.querySelector('#hg-enhanced-file').addEventListener('change', (e) => {
+  // Allow pasting raw script into the textarea (re-clean on input)
+  container.querySelector('#hg-script').addEventListener('input', (e) => {
+    // textarea is readonly by default; remove readonly to allow paste
+    const cleaned = cleanScript(e.target.value);
+    e.target.value = cleaned;
+    updateScriptMeta(container, cleaned);
+  });
+  // Make it editable (remove readonly — user might want to tweak)
+  container.querySelector('#hg-script').removeAttribute('readonly');
+
+  // ── Stage B: drag-and-drop ─────────────────────────────────────────────────
+  const dropZone  = container.querySelector('#hg-drop-zone');
+  const fileInput = container.querySelector('#hg-file-input');
+
+  container.querySelector('#hg-browse-btn').addEventListener('click', () => fileInput.click());
+  dropZone.addEventListener('click', () => fileInput.click());
+
+  dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('drag-over');
+  });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file) setFile(container, file);
+  });
+  fileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) setFile(container, file);
+  });
+
+  container.querySelector('#hg-file-clear').addEventListener('click', () => clearFile(container));
+
+  // "Proceed to YouTube Upload" — direct upload without slides
+  container.querySelector('#hg-upload-direct-btn').addEventListener('click', () => {
+    if (!container._fileObj) return;
+    fireVideoComplete(container, container._fileObjUrl);
+  });
+
+  // "Enhance with Slides" — download render files + show Stage C
+  container.querySelector('#hg-enhance-btn').addEventListener('click', () => {
+    prepareRenderFiles(container);
+    container.querySelector('#hg-render-card').style.display = 'block';
+    container.querySelector('#hg-render-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    animateRenderSteps(container);
+  });
+
+  // Copy terminal command
+  container.querySelector('#hg-copy-cmd-btn').addEventListener('click', () => {
+    navigator.clipboard.writeText('npm run render').then(() => {
+      const btn = container.querySelector('#hg-copy-cmd-btn');
+      btn.textContent = 'Copied!';
+      setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+    });
+  });
+
+  // Stage C: select rendered file
+  container.querySelector('#hg-rendered-file').addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    const objUrl = URL.createObjectURL(file);
-    const statusEl = container.querySelector('#hg-enhanced-status');
-    statusEl.style.display = 'block';
-    setTimeout(() => {
-      document.dispatchEvent(new CustomEvent('video-complete', {
-        detail: {
-          videoUrl: objUrl,
-          videoId:  container._videoId,
-          script:   container.querySelector('#hg-script').value.trim(),
-          topic:    container._topic,
-        },
-      }));
-    }, 800);
+    const url = URL.createObjectURL(file);
+    container.querySelector('#hg-render-ready-status').style.display = 'block';
+    setTimeout(() => fireVideoComplete(container, url), 800);
   });
 
-  // Auto-start when script arrives from Step 2 (if credentials are saved)
+  // Listen for send-to-video from Tab 2
   document.addEventListener('send-to-video', (e) => {
     const { script, topic } = e.detail || {};
-    if (script) container._setScript(script);
     if (topic)  container._topic = topic;
-    const { heygenApiKey, heygenAvatarId, heygenVoiceId } = getSettings();
-    if (heygenApiKey && heygenAvatarId && heygenVoiceId) startGeneration(container);
+    if (script) container._setScript(script);
   });
 }
 
-async function startGeneration(container) {
-  const { heygenApiKey: apiKey, heygenAvatarId: avatarId, heygenVoiceId: voiceId } = getSettings();
-  const script = container.querySelector('#hg-script').value.trim();
+// ── Helpers ────────────────────────────────────────────────────────────────────
 
-  const statusEl     = container.querySelector('#hg-status');
-  const progressCard = container.querySelector('#hg-progress-card');
-  const resultCard   = container.querySelector('#hg-result-card');
-  const btn          = container.querySelector('#generate-video-btn');
-  const retryBtn     = container.querySelector('#hg-retry-btn');
-
-  statusEl.innerHTML = '';
-  progressCard.style.display = 'none';
-  resultCard.style.display   = 'none';
-  retryBtn.style.display     = 'none';
-
-  if (!apiKey || !avatarId || !voiceId) {
-    statusEl.innerHTML = err('HeyGen credentials missing — open <strong>⚙ Settings</strong> to add them.');
-    return;
-  }
-  if (!script) {
-    statusEl.innerHTML = err('Script is empty — generate one in Step 2 first.');
-    return;
-  }
-
-  btn.disabled = true;
-  btn.innerHTML = '<span class="loader"></span><span>Submitting…</span>';
-
-  try {
-    const cleanedScript = cleanScript(script);
-    const chunks = splitIntoChunks(cleanedScript);
-    statusEl.innerHTML = info(
-      chunks.length > 1
-        ? `Splitting script into ${chunks.length} parts…`
-        : 'Submitting script…'
-    );
-
-    const videoId = await submitJob({ apiKey, avatarId, voiceId, chunks });
-    statusEl.innerHTML = info(`Job submitted — Video ID: <code>${videoId}</code>`);
-    progressCard.style.display = 'block';
-    await pollUntilDone({ apiKey, videoId, script, container });
-  } catch (e) {
-    statusEl.innerHTML = err(escHtml(e.message));
-    retryBtn.style.display = 'inline-flex';
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = '<span>Generate Video</span>';
+function updateScriptMeta(container, cleaned) {
+  const words   = cleaned.trim() ? cleaned.trim().split(/\s+/).length : 0;
+  const minLow  = Math.floor(words / 150);
+  const minHigh = Math.ceil(words / 120);
+  const metaEl  = container.querySelector('#hg-script-meta');
+  if (metaEl) {
+    metaEl.textContent = words
+      ? `${words.toLocaleString()} words · Est. ${minLow}–${minHigh} min video`
+      : '';
   }
 }
 
-async function submitJob({ apiKey, avatarId, voiceId, chunks }) {
-  const payload = {
-    video_inputs: chunks.map(chunk => ({
-      character: {
-        type: 'avatar',
-        avatar_id: avatarId,
-        avatar_style: 'normal',
-      },
-      voice: {
-        type: 'text',
-        input_text: chunk,
-        voice_id: voiceId,
-      },
-    })),
-    dimension: { width: 1280, height: 720 },
+function setFile(container, file) {
+  if (container._fileObjUrl) URL.revokeObjectURL(container._fileObjUrl);
+  container._fileObj    = file;
+  container._fileObjUrl = URL.createObjectURL(file);
+
+  container.querySelector('#hg-fname').textContent = file.name;
+  container.querySelector('#hg-fsize').textContent = formatBytes(file.size);
+  container.querySelector('#hg-file-info').style.display = 'block';
+  container.querySelector('#hg-drop-zone').style.display  = 'none';
+}
+
+function clearFile(container) {
+  if (container._fileObjUrl) URL.revokeObjectURL(container._fileObjUrl);
+  container._fileObj    = null;
+  container._fileObjUrl = '';
+  container.querySelector('#hg-file-input').value = '';
+  container.querySelector('#hg-file-info').style.display = 'none';
+  container.querySelector('#hg-drop-zone').style.display  = '';
+  container.querySelector('#hg-render-card').style.display = 'none';
+}
+
+function fireVideoComplete(container, videoUrl) {
+  document.dispatchEvent(new CustomEvent('video-complete', {
+    detail: {
+      videoUrl,
+      videoId:  container._videoId,
+      script:   container._rawScript,
+      topic:    container._topic,
+    },
+  }));
+}
+
+function prepareRenderFiles(container) {
+  const script  = container.querySelector('#hg-script').value.trim();
+  const topic   = container._topic || '';
+  const file    = container._fileObj;
+
+  // render-input.json  (heygen_local_file — user places the MP4 in project dir)
+  const renderInput = {
+    topic,
+    script,
+    heygen_local_file: file ? file.name : 'heygen-input.mp4',
+    heygen_video_url:  '',
+    output_filename:   'final-video.mp4',
   };
+  triggerDownload(JSON.stringify(renderInput, null, 2), 'render-input.json', 'application/json');
 
-  const res = await fetch('https://api.heygen.com/v2/video/generate', {
-    method: 'POST',
-    headers: { 'X-Api-Key': apiKey, 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+  // .env with Anthropic key
+  const { claudeApiKey } = getSettings();
+  if (claudeApiKey) {
+    triggerDownload(`ANTHROPIC_API_KEY=${claudeApiKey}\n`, '.env', 'text/plain');
+  }
+}
+
+function animateRenderSteps(container) {
+  // Cosmetic step animation that indicates what render.js will do
+  const durations = [2000, 3500, 5000, 3000, 500]; // ms per step
+  const steps = container.querySelectorAll('.render-step');
+
+  let delay = 400;
+  steps.forEach((step, i) => {
+    const icon = step.querySelector('.step-icon');
+    // Mark as active
+    setTimeout(() => {
+      icon.textContent = '◐';
+      icon.className = 'step-icon active';
+    }, delay);
+    delay += durations[i];
+    // Mark as done
+    setTimeout(() => {
+      icon.textContent = '✓';
+      icon.className = 'step-icon done';
+    }, delay);
+    delay += 200;
   });
-
-  const data = await res.json();
-  if (!res.ok) {
-    const msg = data?.message || data?.error?.message || JSON.stringify(data);
-    throw new Error(`HeyGen error (${res.status}): ${msg}`);
-  }
-
-  const videoId = data?.data?.video_id || data?.video_id;
-  if (!videoId) throw new Error(`No video_id returned. Response: ${JSON.stringify(data)}`);
-  return videoId;
-}
-
-async function pollUntilDone({ apiKey, videoId, script, container }) {
-  const progressBar   = container.querySelector('#hg-progress-bar');
-  const progressLabel = container.querySelector('#hg-progress-label');
-  const progressCard  = container.querySelector('#hg-progress-card');
-  const resultCard    = container.querySelector('#hg-result-card');
-  const statusEl      = container.querySelector('#hg-status');
-  const retryBtn      = container.querySelector('#hg-retry-btn');
-
-  const startTime   = Date.now();
-  const MAX_WAIT_MS = 20 * 60 * 1000;
-  const estimated   = 10 * 60 * 1000;
-
-  let animFrame;
-  function animateBar() {
-    const elapsed = Date.now() - startTime;
-    const pct = Math.round(Math.min(elapsed / estimated, 1) * 90);
-    progressBar.style.width = pct + '%';
-    const s = Math.round(elapsed / 1000);
-    progressLabel.textContent = `Elapsed: ${Math.floor(s / 60)}m ${s % 60}s — HeyGen is rendering…`;
-    if (pct < 90) animFrame = requestAnimationFrame(animateBar);
-  }
-  animFrame = requestAnimationFrame(animateBar);
-
-  return new Promise((resolve, reject) => {
-    const poll = async () => {
-      if (Date.now() - startTime > MAX_WAIT_MS) {
-        cancelAnimationFrame(animFrame);
-        reject(new Error('Timed out after 20 minutes.'));
-        return;
-      }
-      try {
-        const res = await fetch(
-          `https://api.heygen.com/v1/video_status.get?video_id=${encodeURIComponent(videoId)}`,
-          { headers: { 'X-Api-Key': apiKey } }
-        );
-        const data     = await res.json();
-        const status   = data?.data?.status;
-        const videoUrl = data?.data?.video_url;
-
-        if (status === 'completed' && videoUrl) {
-          cancelAnimationFrame(animFrame);
-          progressBar.style.width = '100%';
-          progressLabel.textContent = 'Done!';
-          setTimeout(() => { progressCard.style.display = 'none'; }, 800);
-
-          container.querySelector('#hg-video-player').src = videoUrl;
-          container.querySelector('#hg-download-btn').href = videoUrl;
-          container._videoId = videoId;
-          resultCard.style.display = 'block';
-          container.querySelector('#hg-enhance-card').style.display = 'block';
-          statusEl.innerHTML = `<div class="status-bar success">Video ready!</div>`;
-          document.dispatchEvent(new CustomEvent('video-complete', {
-            detail: { videoUrl, videoId, script, topic: container._topic },
-          }));
-          resolve(videoUrl);
-
-        } else if (status === 'failed') {
-          cancelAnimationFrame(animFrame);
-          const reason = data?.data?.error?.message || 'Unknown error';
-          retryBtn.style.display = 'inline-flex';
-          reject(new Error(`Rendering failed: ${reason}`));
-
-        } else {
-          setTimeout(poll, POLL_INTERVAL_MS);
-        }
-      } catch (e) {
-        cancelAnimationFrame(animFrame);
-        reject(e);
-      }
-    };
-    setTimeout(poll, POLL_INTERVAL_MS);
-  });
-}
-
-// ── Script helpers ────────────────────────────────────────────────────────────
-
-const CHUNK_MAX = 4500;
-
-/**
- * Split text into ≤ CHUNK_MAX-char chunks, breaking only at sentence ends.
- */
-function splitIntoChunks(text) {
-  if (text.length <= CHUNK_MAX) return [text];
-
-  const chunks = [];
-  let remaining = text;
-
-  while (remaining.length > CHUNK_MAX) {
-    // Find the last ". " or ".\n" at or before CHUNK_MAX
-    let cutAt = -1;
-    for (let i = CHUNK_MAX; i > 0; i--) {
-      if (remaining[i] === '.' && (remaining[i + 1] === ' ' || remaining[i + 1] === '\n' || i + 1 === remaining.length)) {
-        cutAt = i + 1;
-        break;
-      }
-    }
-    // No sentence boundary found — hard cut at CHUNK_MAX
-    if (cutAt === -1) cutAt = CHUNK_MAX;
-
-    chunks.push(remaining.slice(0, cutAt).trim());
-    remaining = remaining.slice(cutAt).trim();
-  }
-
-  if (remaining.length > 0) chunks.push(remaining);
-  return chunks;
-}
-
-const err  = (msg) => `<div class="status-bar error">${msg}</div>`;
-const info = (msg) => `<div class="status-bar info">${msg}</div>`;
-
-function escHtml(str) {
-  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function triggerDownload(content, filename, mimeType) {
@@ -351,4 +349,9 @@ function triggerDownload(content, filename, mimeType) {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+function formatBytes(bytes) {
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }

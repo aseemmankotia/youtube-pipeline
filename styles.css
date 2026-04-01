@@ -317,6 +317,54 @@ textarea { resize: vertical; min-height: 120px; }
 ::-webkit-scrollbar-track { background: var(--surface); }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
+/* Drop zone */
+.drop-zone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 40px 24px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  user-select: none;
+}
+.drop-zone:hover,
+.drop-zone.drag-over {
+  border-color: var(--accent);
+  background: rgba(255,68,68,0.04);
+}
+.drop-zone-inner p { margin-bottom: 6px; }
+.link-btn {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: inherit;
+  padding: 0;
+  text-decoration: underline;
+}
+
+/* Render steps */
+.render-steps { list-style: none; }
+.render-step {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.92rem;
+}
+.render-step:last-child { border-bottom: none; }
+.step-icon {
+  font-size: 1rem;
+  width: 20px;
+  text-align: center;
+  flex-shrink: 0;
+  transition: color 0.2s;
+}
+.step-icon.pending { color: var(--muted); }
+.step-icon.active  { color: var(--accent); }
+.step-icon.done    { color: #7af57a; }
+
 /* History cards */
 .history-grid {
   display: grid;

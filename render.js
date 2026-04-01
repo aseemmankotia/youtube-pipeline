@@ -43,10 +43,11 @@ async function main() {
   }
 
   const input = JSON.parse(fs.readFileSync(INPUT_FILE, 'utf8'));
-  const { topic, script, heygen_video_url, output_filename = 'final-video.mp4' } = input;
+  const { topic, script, output_filename = 'final-video.mp4' } = input;
 
-  if (!heygen_video_url) die('heygen_video_url is missing from render-input.json');
-  if (!script)           die('script is missing from render-input.json');
+  if (!script) die('script is missing from render-input.json');
+  if (!input.heygen_local_file && !input.heygen_video_url)
+    die('render-input.json needs either heygen_local_file or heygen_video_url.');
 
   fs.mkdirSync(SLIDES_DIR, { recursive: true });
   fs.mkdirSync(TEMP_DIR,   { recursive: true });
@@ -63,10 +64,10 @@ async function main() {
   log('\n🎨 Steps 2-3 — Generating and screenshotting slides…');
   await generateSlides(sections);
 
-  // ── Step 4: Download HeyGen video ───────────────────────────────────────────
-  log('\n⬇  Step 4 — Downloading HeyGen video…');
+  // ── Step 4: Get HeyGen video (local file or remote URL) ─────────────────────
+  log('\n⬇  Step 4 — Locating HeyGen video…');
   const heygenPath = path.join(TEMP_DIR, 'heygen-raw.mp4');
-  await downloadVideo(heygen_video_url, heygenPath);
+  await resolveHeygenVideo(input, heygenPath);
 
   // ── Step 5: Get duration + distribute timings ────────────────────────────────
   log('\n⏱  Step 5 — Getting video duration and distributing slide timings…');
@@ -284,7 +285,32 @@ ul.bullets li::before{
 </html>`;
 }
 
-// ── Step 4: Download HeyGen video ──────────────────────────────────────────────
+/// ── Step 4: Resolve HeyGen video (local file or remote URL) ───────────────────
+
+async function resolveHeygenVideo(input, dest) {
+  // 1. Check for a local file named in render-input.json
+  if (input.heygen_local_file) {
+    const localPath = path.join(__dirname, input.heygen_local_file);
+    if (fs.existsSync(localPath)) {
+      log(`   ✓ Using local file: ${input.heygen_local_file}`);
+      fs.copyFileSync(localPath, dest);
+      return;
+    }
+    log(`   ⚠ Local file "${input.heygen_local_file}" not found — trying URL…`);
+  }
+  // 2. Fall back to downloading from URL
+  if (input.heygen_video_url) {
+    await downloadVideo(input.heygen_video_url, dest);
+    return;
+  }
+  die(
+    `No HeyGen video found.\n` +
+    `Place your MP4 in ~/youtube-pipeline/ as "${input.heygen_local_file || 'heygen-input.mp4'}".\n` +
+    `Or add a "heygen_video_url" field to render-input.json.`
+  );
+}
+
+// ── Step 4b: Download from URL ─────────────────────────────────────────────────
 
 async function downloadVideo(url, dest) {
   const res = await axios({ url, method: 'GET', responseType: 'stream' });

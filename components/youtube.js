@@ -19,9 +19,15 @@ export function renderYouTube(container) {
       <h2>Upload to YouTube</h2>
 
       <div class="form-group">
-        <label for="yt-video-url">Video URL (from HeyGen)</label>
+        <label for="yt-video-url">Video Source</label>
         <input type="text" id="yt-video-url"
-          placeholder="Auto-filled when Step 3 completes, or paste manually…" />
+          placeholder="Auto-filled from Tab 3, or paste a video URL…"
+          style="margin-bottom:8px;" />
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <span style="font-size:0.82rem;color:var(--muted);">or select a local file:</span>
+          <input type="file" id="yt-local-file" accept=".mp4,video/*"
+            style="font-size:0.82rem;color:var(--text);" />
+        </div>
       </div>
 
       <div class="form-row">
@@ -82,6 +88,16 @@ export function renderYouTube(container) {
     container.querySelector('#yt-retry-btn').style.display = 'none';
     startUpload(container);
   });
+
+  // Local file picker — create blob URL and use as video source
+  container.querySelector('#yt-local-file').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (container._localFileUrl) URL.revokeObjectURL(container._localFileUrl);
+    container._localFileUrl = URL.createObjectURL(file);
+    container.querySelector('#yt-video-url').value = container._localFileUrl;
+  });
+  container._localFileUrl = '';
 
   container._heygenVideoId  = '';
   container._heygenVideoUrl = '';

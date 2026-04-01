@@ -34,21 +34,18 @@ export function renderSettings(container) {
     </div>
 
     <div class="card">
-      <h2>HeyGen Video Generation</h2>
-      <div class="form-row">
-        <div class="form-group" data-field="heygenApiKey">
-          <label for="sg-hg-apikey">HeyGen API Key</label>
-          <input type="password" id="sg-hg-apikey"
-            placeholder="sk_V2_…" autocomplete="off" value="${esc(s.heygenApiKey)}" />
-        </div>
-        <div class="form-group" data-field="heygenAvatarId">
-          <label for="sg-hg-avatar">Avatar ID</label>
-          <input type="text" id="sg-hg-avatar"
-            placeholder="e.g. josh_lite3_20230714" value="${esc(s.heygenAvatarId)}" />
-        </div>
-      </div>
+      <h2>HeyGen</h2>
+      <p style="font-size:0.85rem;color:var(--muted);margin-bottom:16px;">
+        Scripts are generated and copied manually into
+        <a href="https://www.heygen.com" target="_blank" rel="noopener"
+          style="color:var(--accent);">heygen.com</a>
+        — no API key required.
+      </p>
       <div class="form-group" data-field="heygenVoiceId">
-        <label for="sg-hg-voice">Voice ID</label>
+        <label for="sg-hg-voice">
+          Voice ID
+          <span style="color:var(--muted);font-weight:400"> — optional, for your own reference</span>
+        </label>
         <input type="text" id="sg-hg-voice"
           placeholder="e.g. 3ec6fddde15a4f5bacf2c1557ecea26f" value="${esc(s.heygenVoiceId)}" />
       </div>
@@ -168,8 +165,6 @@ function updateCheck(input) {
 function persist(container) {
   saveSettings({
     claudeApiKey:     container.querySelector('#sg-claude-key').value.trim(),
-    heygenApiKey:     container.querySelector('#sg-hg-apikey').value.trim(),
-    heygenAvatarId:   container.querySelector('#sg-hg-avatar').value.trim(),
     heygenVoiceId:    container.querySelector('#sg-hg-voice').value.trim(),
     ytClientId:       container.querySelector('#sg-yt-clientid').value.trim(),
     ytClientSecret:   container.querySelector('#sg-yt-secret').value.trim(),

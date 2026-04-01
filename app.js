@@ -43,8 +43,7 @@ const dot = document.getElementById('settings-dot');
 
 function updateSettingsDot() {
   const s = getSettings();
-  const missing = !s.heygenApiKey || !s.heygenAvatarId || !s.heygenVoiceId
-               || !s.ytClientId   || !s.ytClientSecret  || !s.ytRefreshToken;
+  const missing = !s.ytClientId || !s.ytClientSecret || !s.ytRefreshToken;
   dot.style.display = missing ? 'block' : 'none';
 }
 
