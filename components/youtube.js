@@ -82,9 +82,14 @@ export function renderYouTube(container) {
     startUpload(container);
   });
 
+  container._heygenVideoId  = '';
+  container._heygenVideoUrl = '';
+
   document.addEventListener('video-complete', (e) => {
-    const { videoUrl, script, topic } = e.detail || {};
+    const { videoUrl, videoId, script, topic } = e.detail || {};
     if (videoUrl) container.querySelector('#yt-video-url').value = videoUrl;
+    if (videoId)  container._heygenVideoId  = videoId;
+    if (videoUrl) container._heygenVideoUrl = videoUrl;
     if (script)   fillMetadata(container, script, topic);
     const { ytClientId, ytClientSecret, ytRefreshToken } = getSettings();
     if (ytClientId && ytClientSecret && ytRefreshToken) startUpload(container);
@@ -168,7 +173,15 @@ async function startUpload(container) {
     statusEl.innerHTML = successBar(
       `Upload complete! <a href="${ytUrl}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">youtube.com/watch?v=${videoId}</a>`
     );
-    document.dispatchEvent(new CustomEvent('upload-complete', { detail: { videoId, ytUrl } }));
+    document.dispatchEvent(new CustomEvent('upload-complete', {
+      detail: {
+        videoId,
+        ytUrl,
+        youtubeTitle:    title,
+        heygenVideoId:   container._heygenVideoId,
+        heygenVideoUrl:  container._heygenVideoUrl,
+      },
+    }));
 
   } catch (err) {
     statusEl.innerHTML = errBar(esc(err.message));
