@@ -419,9 +419,11 @@ async function composite(ffmpeg, ffprobe, sections, heygenPath, outPath) {
   //     Avatar: 380×214 scaled, padded to 386×220 (3px white border each side)
   //     Position: x=884 (1280−386−10), y=490 (720−220−10)
   const hasAudio = hasAudioStream(ffprobe, heygenPath);
+  // Use explicit -map "[outv]" (the labelled filter output) to avoid FFmpeg 8
+  // auto-mapping input 0's raw video as a second stream alongside the overlay.
   const audioArgs = hasAudio
-    ? `-c:a aac -b:a 192k -map 0:v -map 1:a`
-    : `-map 0:v -an`;
+    ? `-map "[outv]" -map 1:a -c:a aac -b:a 192k`
+    : `-map "[outv]" -an`;
 
   // Resolve overlay expression from PIP_POSITION
   const overlayExpr = {
@@ -464,7 +466,7 @@ async function composite(ffmpeg, ffprobe, sections, heygenPath, outPath) {
       `"[0:v]scale=1280:720[bg];` +
        `${pipScaleFilter};` +
        `[av_scaled]pad=iw+6:ih+6:3:3:color=white[av_bordered];` +
-       `[bg][av_bordered]overlay=${overlayExpr}" ` +
+       `[bg][av_bordered]overlay=${overlayExpr}[outv]" ` +
     `-c:v libx264 -crf 22 -preset medium -pix_fmt yuv420p ` +
     `${audioArgs} ` +
     `"${outPath}"`,
