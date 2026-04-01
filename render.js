@@ -83,6 +83,31 @@ async function main() {
   log(`\n✅ Render complete: ${output_filename}`);
 }
 
+// ── cleanScript (mirrors components/clean-script.js for Node.js) ──────────────
+
+function cleanScript(raw) {
+  if (!raw) return '';
+  const lines = raw.split('\n').map(line => {
+    let l = line.trim();
+    if (/^#{1,6}(\s|$)/.test(l)) return '';
+    if (/youtube\s+script/i.test(l)) return '';
+    if (/^(entertainment|tutorial|how-to|opinion|commentary|news|explainer|storytime|narrative|tech|short|medium|long|minutes?)\s*$/i.test(l)) return '';
+    if (/^[-=]{3,}$/.test(l)) return '';
+    if (/^\[[\w\s/&:,.'"\d-]+\][:,]?\s*$/.test(l)) return '';
+    l = l.replace(/\([^)]*\)/g, '');
+    l = l.replace(/\*\*([^*\n]+)\*\*/g, '$1');
+    l = l.replace(/\*[^*\n]+\*/g, '');
+    l = l.replace(/__([^_\n]+)__/g, '$1');
+    l = l.replace(/_([^_\n]+)_/g, '$1');
+    l = l.replace(/```[\s\S]*?```/g, '');
+    l = l.replace(/`[^`\n]*`/g, '');
+    l = l.replace(/^>\s*/, '');
+    l = l.replace(/^[-•]\s+/, '');
+    return l.trim();
+  });
+  return lines.filter(l => l.length > 0).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 // ── Step 1: Split script via Anthropic API ─────────────────────────────────────
 
 async function splitScript(script, topic) {
@@ -102,7 +127,7 @@ Topic: ${topic || 'YouTube Video'}
 
 Script:
 """
-${script}
+${cleanScript(script)}
 """
 
 Split this script into 5-8 sections for a slide presentation. Return ONLY valid JSON — no markdown fences, no explanation:

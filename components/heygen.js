@@ -3,7 +3,8 @@
  * Credentials are read from Settings tab via getSettings().
  */
 
-import { getSettings } from './settings.js';
+import { getSettings }  from './settings.js';
+import { cleanScript }  from './clean-script.js';
 
 const POLL_INTERVAL_MS = 10_000;
 
@@ -173,7 +174,7 @@ async function startGeneration(container) {
   btn.innerHTML = '<span class="loader"></span><span>Submitting…</span>';
 
   try {
-    const cleanedScript = stripMarkdown(script);
+    const cleanedScript = cleanScript(script);
     const chunks = splitIntoChunks(cleanedScript);
     statusEl.innerHTML = info(
       chunks.length > 1
@@ -303,22 +304,6 @@ async function pollUntilDone({ apiKey, videoId, script, container }) {
 }
 
 // ── Script helpers ────────────────────────────────────────────────────────────
-
-/**
- * Remove markdown symbols that HeyGen would speak aloud verbatim.
- */
-function stripMarkdown(text) {
-  return text
-    .replace(/^#{1,6}\s*/gm, '')        // headings
-    .replace(/\*{1,3}([^*]+)\*{1,3}/g, '$1')  // bold / italic
-    .replace(/_{1,2}([^_]+)_{1,2}/g, '$1')    // underscores
-    .replace(/^\s*[-*]{3,}\s*$/gm, '')  // horizontal rules
-    .replace(/`{1,3}[^`]*`{1,3}/g, '')  // inline code / fences
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')  // links → text
-    .replace(/^\s*>\s*/gm, '')          // blockquotes
-    .replace(/\n{3,}/g, '\n\n')         // collapse excess blank lines
-    .trim();
-}
 
 const CHUNK_MAX = 4500;
 

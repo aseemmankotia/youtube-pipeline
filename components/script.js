@@ -4,6 +4,7 @@
  */
 
 import { getSettings } from './settings.js';
+import { cleanScript } from './clean-script.js';
 
 const TONES   = ['Engaging & Energetic', 'Educational & Calm', 'Humorous & Casual', 'Inspirational', 'Documentary-Style'];
 const LENGTHS = ['Short (3–5 min)', 'Medium (8–12 min)', 'Long (18–25 min)'];
@@ -54,7 +55,17 @@ export function renderScript(container) {
     </div>
 
     <div id="script-output-card" style="display:none" class="card">
-      <h2>Generated Script</h2>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
+        <h2 style="margin:0;">Generated Script</h2>
+        <button class="btn btn-secondary" id="toggle-preview-btn"
+          style="font-size:0.8rem;padding:5px 14px;">
+          Preview (cleaned)
+        </button>
+      </div>
+      <div id="script-view-label"
+        style="font-size:0.78rem;color:var(--muted);margin-bottom:8px;">
+        Showing raw script — click "Preview (cleaned)" to see what HeyGen will speak
+      </div>
       <div class="script-output" id="script-text"></div>
       <div class="script-actions">
         <button class="btn btn-secondary" id="copy-script-btn">Copy Script</button>
@@ -109,6 +120,23 @@ async function generateScript(container) {
 
     textEl.textContent = script;
     outCard.style.display = 'block';
+
+    // Preview toggle — raw vs cleaned
+    let showingCleaned = false;
+    const toggleBtn  = container.querySelector('#toggle-preview-btn');
+    const viewLabel  = container.querySelector('#script-view-label');
+    toggleBtn.onclick = () => {
+      showingCleaned = !showingCleaned;
+      if (showingCleaned) {
+        textEl.textContent = cleanScript(script);
+        toggleBtn.textContent = 'Show Raw';
+        viewLabel.textContent = 'Showing cleaned script — this is what HeyGen will speak';
+      } else {
+        textEl.textContent = script;
+        toggleBtn.textContent = 'Preview (cleaned)';
+        viewLabel.textContent = 'Showing raw script — click "Preview (cleaned)" to see what HeyGen will speak';
+      }
+    };
 
     container.querySelector('#copy-script-btn').onclick = () => {
       navigator.clipboard.writeText(script).then(() => {
