@@ -3,9 +3,10 @@
  * Credentials are read from Settings tab via getSettings().
  * Upload flow:
  *   1. Refresh access token via POST https://oauth2.googleapis.com/token
- *   2. Initiate resumable upload session
- *   3. Fetch video blob and upload in 5 MB chunks
- *   4. Show progress bar + "View on YouTube" link when done
+ *   2. Download HeyGen video blob (detects actual MIME type from response headers)
+ *   3. Initiate resumable upload session with correct Content-Type
+ *   4. Upload binary in 5 MB chunks with live progress bar
+ *   5. Show "View on YouTube" link when done
  */
 
 import { getSettings } from './settings.js';
@@ -26,7 +27,7 @@ export function renderYouTube(container) {
       <div class="form-row">
         <div class="form-group">
           <label for="yt-title">Title</label>
-          <input type="text" id="yt-title" placeholder="Auto-generated from script…" />
+          <input type="text" id="yt-title" placeholder="Auto-generated from topic…" />
         </div>
         <div class="form-group">
           <label for="yt-privacy">Privacy</label>
@@ -103,13 +104,35 @@ export function renderYouTube(container) {
 
 // ── Metadata ──────────────────────────────────────────────────────────────────
 
+function stripMd(str) {
+  return String(str || '')
+    .replace(/^#{1,6}\s*/gm, '')
+    .replace(/\*{1,3}([^*\n]+)\*{1,3}/g, '$1')
+    .replace(/_{1,2}([^_\n]+)_{1,2}/g, '$1')
+    .replace(/`[^`]*`/g, '')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/^\s*[-*>]\s*/gm, '')
+    .trim();
+}
+
 function fillMetadata(container, script, topic) {
-  const lines = script.split('\n').map(l => l.trim()).filter(Boolean);
-  const titleLine = lines.find(l => !l.startsWith('[')) || topic || 'My YouTube Video';
-  const title = titleLine.slice(0, 100);
-  const description = lines.filter(l => !l.startsWith('[')).slice(0, 3).join('\n');
+  // Title: prefer topic, fall back to first meaningful script line
+  const cleanTopic = stripMd(topic || '');
+  const firstScriptLine = script.split('\n')
+    .map(l => stripMd(l))
+    .find(l => l.length > 5) || '';
+  const title = (cleanTopic || firstScriptLine || 'My YouTube Video').slice(0, 100);
+
+  // Description: first 3 sentences from script + hashtags
+  const sentences = script.replace(/\n+/g, ' ').match(/[^.!?]+[.!?]+/g) || [];
+  const descBody  = sentences.slice(0, 3).map(s => stripMd(s)).join(' ').trim();
+  const topicWords = (topic || '').split(/\W+/).filter(w => w.length >= 3).slice(0, 5);
+  const hashtags  = topicWords.map(w => `#${w}`).join(' ');
+  const description = [descBody, hashtags].filter(Boolean).join('\n\n');
+
+  // Tags from topic words
   const tags = [...new Set(
-    `${topic || ''} ${titleLine}`.split(/\W+/).filter(w => w.length >= 3 && w.length <= 20)
+    (topic || '').split(/\W+/).filter(w => w.length >= 3 && w.length <= 20)
   )].slice(0, 10).join(', ');
 
   container.querySelector('#yt-title').value       = title;
@@ -154,18 +177,24 @@ async function startUpload(container) {
     statusEl.innerHTML = infoBar('Refreshing access token…');
     const accessToken = await refreshAccessToken({ clientId, clientSecret, refreshToken });
 
+    // Step 1: Download the actual video binary from HeyGen.
+    // We read the Content-Type from the response so YouTube receives the
+    // correct MIME type — avoids "Processing abandoned" when HeyGen serves
+    // something other than video/mp4.
     statusEl.innerHTML = infoBar('Downloading video from HeyGen…');
-    const videoBlob = await fetchVideoBlob(videoUrl);
+    const { blob: videoBlob, mimeType } = await fetchVideoBlob(videoUrl);
 
-    statusEl.innerHTML = infoBar('Initiating YouTube upload session…');
+    statusEl.innerHTML = infoBar(`Initiating YouTube upload session… (${mb(videoBlob.size)} MB, ${mimeType})`);
     const uploadUrl = await initiateResumableUpload({
       accessToken, title, description, tags, privacy,
       fileSize: videoBlob.size,
+      mimeType,
     });
 
+    // Step 2: Upload the binary in 5 MB chunks with a live progress bar.
     progressCard.style.display = 'block';
     statusEl.innerHTML = '';
-    const videoId = await uploadInChunks({ uploadUrl, videoBlob, container });
+    const videoId = await uploadInChunks({ uploadUrl, videoBlob, mimeType, container });
 
     const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
     container.querySelector('#yt-view-link').href = ytUrl;
@@ -177,9 +206,9 @@ async function startUpload(container) {
       detail: {
         videoId,
         ytUrl,
-        youtubeTitle:    title,
-        heygenVideoId:   container._heygenVideoId,
-        heygenVideoUrl:  container._heygenVideoUrl,
+        youtubeTitle:   title,
+        heygenVideoId:  container._heygenVideoId,
+        heygenVideoUrl: container._heygenVideoUrl,
       },
     }));
 
@@ -213,10 +242,13 @@ async function refreshAccessToken({ clientId, clientSecret, refreshToken }) {
 async function fetchVideoBlob(videoUrl) {
   const res = await fetch(videoUrl);
   if (!res.ok) throw new Error(`Could not download video (${res.status}): ${res.statusText}`);
-  return await res.blob();
+  const blob = await res.blob();
+  // Use the server-reported MIME type; fall back to video/mp4
+  const mimeType = (res.headers.get('Content-Type') || 'video/mp4').split(';')[0].trim();
+  return { blob, mimeType };
 }
 
-async function initiateResumableUpload({ accessToken, title, description, tags, privacy, fileSize }) {
+async function initiateResumableUpload({ accessToken, title, description, tags, privacy, fileSize, mimeType }) {
   const res = await fetch(
     'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status',
     {
@@ -224,7 +256,7 @@ async function initiateResumableUpload({ accessToken, title, description, tags, 
       headers: {
         'Authorization':           `Bearer ${accessToken}`,
         'Content-Type':            'application/json',
-        'X-Upload-Content-Type':   'video/mp4',
+        'X-Upload-Content-Type':   mimeType,
         'X-Upload-Content-Length': String(fileSize),
       },
       body: JSON.stringify({
@@ -244,7 +276,7 @@ async function initiateResumableUpload({ accessToken, title, description, tags, 
   return uploadUrl;
 }
 
-async function uploadInChunks({ uploadUrl, videoBlob, container }) {
+async function uploadInChunks({ uploadUrl, videoBlob, mimeType, container }) {
   const progressBar   = container.querySelector('#yt-progress-bar');
   const progressLabel = container.querySelector('#yt-progress-label');
   const total  = videoBlob.size;
@@ -258,21 +290,25 @@ async function uploadInChunks({ uploadUrl, videoBlob, container }) {
       method: 'PUT',
       headers: {
         'Content-Range': `bytes ${offset}-${end - 1}/${total}`,
-        'Content-Type':  'video/mp4',
+        'Content-Type':  mimeType,
       },
       body: chunk,
     });
 
     if (res.status === 308) {
+      // Intermediate chunk accepted — keep going
       offset = end;
       const pct = Math.round((offset / total) * 100);
-      progressBar.style.width = pct + '%';
+      progressBar.style.width   = pct + '%';
       progressLabel.textContent = `Uploading… ${pct}% (${mb(offset)} / ${mb(total)} MB)`;
 
     } else if (res.status === 200 || res.status === 201) {
-      progressBar.style.width = '100%';
+      // Final chunk accepted — upload complete
+      progressBar.style.width   = '100%';
       progressLabel.textContent = 'Upload complete!';
-      return (await res.json()).id;
+      const data = await res.json();
+      if (!data.id) throw new Error(`Upload finished but no video ID returned. Response: ${JSON.stringify(data)}`);
+      return data.id;
 
     } else {
       const errData = await res.json().catch(() => ({}));
@@ -280,7 +316,7 @@ async function uploadInChunks({ uploadUrl, videoBlob, container }) {
     }
   }
 
-  throw new Error('Upload finished without a video ID — unexpected state.');
+  throw new Error('Upload loop ended without a completed response — unexpected state.');
 }
 
 // ── UI helpers ────────────────────────────────────────────────────────────────
