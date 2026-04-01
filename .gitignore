@@ -1,2 +1,7 @@
 youtube-token.json
 client_secrets.json
+node_modules/
+slides/
+temp/
+.env
+render-input.json
