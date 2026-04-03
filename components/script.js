@@ -161,6 +161,7 @@ async function generateScript(container) {
 
 async function generateWithClaude({ topic, tone, length, style, channel, apiKey }) {
   const channelLine = channel ? ` The channel is called "${channel}".` : '';
+  const ch = channel || 'this channel';
   const prompt = `You are a professional YouTube scriptwriter.
 Write a complete, ready-to-record YouTube script for a ${style} video.${channelLine}
 
@@ -168,17 +169,38 @@ Topic: ${topic}
 Tone: ${tone}
 Target video length: ${length}
 
-Structure the script with clearly labelled sections:
-[HOOK], [INTRO], [SECTION 1], [SECTION 2], [SECTION 3], [CTA], [OUTRO]
+## REQUIRED STRUCTURE — follow this exactly:
 
-Include:
-- An attention-grabbing hook (first 15 seconds)
-- Natural spoken language with pacing notes where helpful
-- Smooth transitions between sections
-- A clear call-to-action
-- Like/subscribe reminder woven in naturally
+[HOOK]
+First 15 seconds. Grab attention with a bold question, surprising fact, or provocative statement directly tied to the topic. Make them need to keep watching.
 
-Output only the script text, no meta-commentary.`;
+[OPENING]
+Immediately after the hook — before any main content:
+• Warmly thank viewers for clicking and watching (genuine, not robotic)
+• Natural subscribe ask — tie it to the channel's value: something like "If this is the kind of content you're into, subscribe — we cover [niche] every week"
+• Like-button ask tied to a SPECIFIC, relatable situation about the topic — e.g. "Hit the like button if you've ever [specific frustrating/exciting/relatable moment tied to ${topic}]" — make it feel earned and human
+
+[SECTION 1] / [SECTION 2] / [SECTION 3] (add more as needed for the target length)
+• Natural spoken language — write for the ear, not the eye
+• Short punchy sentences during high-energy moments, longer ones when explaining
+• Real examples, analogies, or brief stories to ground abstract ideas
+• Smooth transitions: end each section with a bridge line into the next
+
+[CLOSING]
+End with ALL of the following, woven naturally into the ${tone} tone:
+1. Recap — "So here's what we covered today:" then list the 3 most important things they learned. Make it feel like a satisfying payoff, not a bullet list. Frame each as insight, not just topic.
+2. Like ask — "If you got value from this video, smash that like button — it genuinely helps more people find this content and keeps this channel growing"
+3. Subscribe + bell — "And if you haven't already, subscribe and hit the notification bell — our next video is going to be about [tease a compelling related topic that feels like a natural next step from today's content]"
+4. Comment question — "Drop a comment below — [pose ONE specific, thought-provoking question directly tied to ${topic} that invites personal stories, opinions, or experiences. Not generic like 'what do you think?' — make it specific]"
+5. Sign-off — "See you in the next one!" or a natural sign-off that fits the ${tone} tone
+
+## STYLE NOTES
+- The opening and closing must feel human and conversational, not scripted or robotic
+- Never say "Don't forget to like and subscribe" on its own — always tie it to something specific
+- The comment question should make people actually want to answer it
+- Match the ${tone} tone throughout — adjust energy, vocabulary, and pacing accordingly
+
+Output only the script text. No meta-commentary outside of the section labels.`;
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -212,37 +234,42 @@ function generateTemplate({ topic, tone, length, style, channel }) {
   return `[HOOK]
 Hey — before you scroll past, let me ask you something. Have you ever wondered about ${topic}? Because today, we're going deep on exactly that, and what I found might completely change how you think about it.
 
-[INTRO]
-What's up everyone, welcome back to ${ch}. I'm so glad you're here today because we are talking about ${topic} — a ${style.toLowerCase()} breakdown that covers everything you actually need to know in about ${minStr}.
+[OPENING]
+What's up everyone, welcome back to ${ch}. Seriously, thank you for clicking on this — ${topic} is something I've wanted to break down for a while, and I'm glad you're here for it.
 
-If you're new here, make sure you hit that subscribe button — we drop content like this every week.
+If you're getting value from content like this, hit subscribe — we put out videos on this stuff every week and I'd love to have you along for the ride.
+
+And hey — hit the like button if you've ever gone down a rabbit hole researching ${topic} and come out more confused than when you started. Because same. Let's fix that today.
 
 [SECTION 1: THE SETUP]
 So first, let's talk about the big picture. ${topic} is one of those subjects that sounds simple on the surface, but the more you dig into it, the more nuance you find. Here's what most people get wrong from the start…
 
-(Tone: ${tone})
-
 [SECTION 2: THE CORE CONTENT]
 Now here's where it gets really interesting. Let me walk you through the key things you need to understand.
 
-Point one — context matters enormously here. The way ${topic} works today is completely different from even two or three years ago.
+Point one — context matters enormously here. The way ${topic} works today is completely different from even a couple of years ago.
 
 Point two — most guides skip over the foundational stuff. That's a mistake. We're not going to do that.
 
-Point three — there are a few counterintuitive moves that top creators and experts use. I'll show you exactly what those are.
+Point three — there are a few counterintuitive moves that the people who really get this use. I'll walk you through exactly what those are.
 
 [SECTION 3: PRACTICAL TAKEAWAYS]
-Alright so here's how you actually apply this. Whether you're a complete beginner or you've been in the space for years, these action steps will move the needle.
+Alright, here's how you actually apply this. Whether you're just starting out or you've been in the space for a while, these moves will make a difference.
 
-Step 1: Start with the fundamentals we covered in section one.
-Step 2: Apply the framework from section two to your specific situation.
-Step 3: Iterate. Don't wait for perfect.
+Step one: start with the fundamentals from section one — they matter more than most people realise.
+Step two: apply the framework from section two to your specific situation.
+Step three: iterate. Don't wait for perfect conditions.
 
-[CTA]
-If you want to go even deeper on ${topic}, I've put together some additional resources — check the description below. And if this video helped you at all, the single best thing you can do is leave a like. It genuinely helps this channel grow and tells the algorithm to show this to more people who need it.
+[CLOSING]
+So here's what we covered today. First, we looked at why ${topic} is more nuanced than it looks on the surface — and what most people get wrong. Second, we walked through the core framework you actually need to understand it properly. And third, we turned all of that into practical steps you can actually use.
 
-[OUTRO]
-That's it for today. Thank you so much for watching all the way to the end — it means a lot. I'll see you in the next one. Take care.`;
+If you got value from this video, smash that like button — it genuinely helps more people find this content and keeps this channel growing.
+
+And if you haven't already, subscribe and hit the notification bell — our next video is going to cover something that builds directly on what we talked about today, and you don't want to miss it.
+
+Drop a comment below — I want to know: what's the one thing about ${topic} that took you the longest to actually understand? I read every comment and I genuinely want to hear your experience.
+
+See you in the next one!`;
 }
 
 function escHtml(str) {

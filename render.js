@@ -142,22 +142,62 @@ Script:
 ${cleanScript(script)}
 """
 
-Split this script into 5-8 sections for a slide presentation. Return ONLY valid JSON — no markdown fences, no explanation:
+Split this script into 5-8 sections for a slide presentation.
+Choose the most visually impactful slide type for each section:
+- "diagram"  — architecture, flows, step sequences, comparisons, processes
+- "code"     — when the section covers code, commands, or technical implementation
+- "stats"    — when a compelling number/percentage/statistic anchors the section
+- "quote"    — expert opinions, key insights, memorable statements
+- "bullets"  — default for general explanation sections
+
+Return ONLY valid JSON — no markdown fences, no explanation:
 {
   "sections": [
     {
       "title": "concise slide title (4-7 words)",
-      "bullets": ["point 1", "point 2", "point 3"],
-      "stat": "one compelling stat, quote, or number — or null",
-      "script_excerpt": "the portion of the script this slide covers",
+      "type": "bullets",
+      "bullets": ["point 1 (≤12 words)", "point 2", "point 3"],
+      "stat": "one striking number or null",
       "duration_seconds": 30
+    },
+    {
+      "title": "How the Architecture Works",
+      "type": "diagram",
+      "mermaid_code": "graph LR\\n  A[User] --> B[API] --> C[Database]",
+      "duration_seconds": 40
+    },
+    {
+      "title": "Code in Action",
+      "type": "code",
+      "code_snippet": "const data = await fetch(url).then(r => r.json())",
+      "code_language": "javascript",
+      "duration_seconds": 35
+    },
+    {
+      "title": "The Numbers",
+      "type": "stats",
+      "stat_number": "73%",
+      "stat_label": "of developers now use AI tools daily",
+      "stat_context": "Stack Overflow Developer Survey 2024",
+      "duration_seconds": 30
+    },
+    {
+      "title": "Key Insight",
+      "type": "quote",
+      "quote_text": "Any sufficiently advanced technology is indistinguishable from magic.",
+      "quote_author": "Arthur C. Clarke",
+      "duration_seconds": 25
     }
   ]
 }
 
 Rules:
-- 2-4 bullets per slide, each ≤ 12 words
-- stat: striking number/fact/quote when it fits naturally, otherwise null
+- Omit fields that don't apply to the chosen type
+- bullets: 2-4 points each ≤12 words; stat field optional (striking number/fact or null)
+- diagram: valid Mermaid.js syntax only — no HTML, no markdown, escape backslashes as \\n
+- code: syntactically correct snippet; code_language lowercase (javascript/python/bash/etc.)
+- stats: stat_number includes unit/symbol (%, x, M, K); stat_context is one short attribution sentence
+- quote: concise and impactful; real attribution in quote_author
 - duration_seconds proportional to script length (total ≈ script read at 130 wpm)`,
       }],
     },
@@ -188,41 +228,30 @@ async function generateSlides(sections) {
     fs.writeFileSync(path.join(SLIDES_DIR, `slide-${i}.html`), html, 'utf8');
   }
 
-  // Screenshot with Puppeteer
+  // Screenshot with Puppeteer — wait time varies by slide type
+  const WAIT_MS = { bullets: 1500, diagram: 2500, code: 1500, stats: 2000, quote: 1000 };
+
   const browser = await puppeteer.launch({ headless: true });
   const page    = await browser.newPage();
   await page.setViewport({ width: 1280, height: 720, deviceScaleFactor: 1 });
 
   for (let i = 0; i < total; i++) {
     const htmlPath = path.join(SLIDES_DIR, `slide-${i}.html`);
-    await page.goto(`file://${htmlPath}`, { waitUntil: 'networkidle0', timeout: 20_000 });
+    await page.goto(`file://${htmlPath}`, { waitUntil: 'networkidle0', timeout: 30_000 });
+    const waitMs = WAIT_MS[sections[i].type] || 1500;
+    await new Promise(r => setTimeout(r, waitMs));
     const pngPath = path.join(SLIDES_DIR, `slide-${i}.png`);
     await page.screenshot({ path: pngPath });
-    log(`   ✓ slide-${i}.png`);
+    log(`   ✓ slide-${i}.png (${sections[i].type || 'bullets'})`);
   }
 
   await browser.close();
 }
 
-function buildSlideHTML(section, index, total) {
-  const bullets = (section.bullets || [])
-    .map(b => `<li>${escHtml(b)}</li>`)
-    .join('\n      ');
+// ── Shared slide helpers ───────────────────────────────────────────────────────
 
-  const stat = section.stat
-    ? `<div class="stat">${escHtml(section.stat)}</div>`
-    : '';
-
-  const dots = Array.from({ length: total }, (_, i) =>
-    `<span class="dot${i === index ? ' active' : ''}"></span>`
-  ).join('');
-
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
-<style>
+// CSS shared across all slide types
+const SLIDE_BASE_CSS = `
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
 body{
   width:1280px;height:720px;
@@ -230,7 +259,6 @@ body{
   font-family:'Inter',system-ui,sans-serif;
   color:#fff;overflow:hidden;position:relative;
 }
-/* Subtle grid — full canvas */
 body::before{
   content:'';position:absolute;inset:0;
   background-image:
@@ -238,58 +266,260 @@ body::before{
     linear-gradient(90deg,rgba(255,255,255,.04) 1px,transparent 1px);
   background-size:48px 48px;pointer-events:none;
 }
-/* Content area — full width, avatar overlays on top via FFmpeg */
 .content{
   position:absolute;left:0;top:0;
   width:1280px;height:720px;
-  padding:72px 80px;
-  display:flex;flex-direction:column;justify-content:center;
+  padding:60px 80px;
+  display:flex;flex-direction:column;
   z-index:1;
 }
 .section-label{
-  font-size:12px;font-weight:700;letter-spacing:5px;
-  color:#ff4444;text-transform:uppercase;margin-bottom:22px;
+  font-size:11px;font-weight:700;letter-spacing:5px;
+  color:#ff4444;text-transform:uppercase;margin-bottom:18px;opacity:.85;
 }
 .title{
-  font-size:54px;font-weight:800;line-height:1.08;
-  color:#fff;margin-bottom:32px;letter-spacing:-1px;
+  font-size:48px;font-weight:800;line-height:1.1;
+  color:#fff;margin-bottom:26px;letter-spacing:-1px;
   max-width:900px;
 }
-ul.bullets{list-style:none;margin-bottom:28px;}
-ul.bullets li{
-  font-size:24px;color:#c0c0c0;line-height:1.5;
-  margin-bottom:14px;padding-left:28px;position:relative;
-}
-ul.bullets li::before{
-  content:'—';position:absolute;left:0;color:#ff4444;font-weight:700;
-}
-.stat{
-  background:rgba(255,68,68,.09);
-  border-left:3px solid #ff4444;
-  padding:16px 22px;border-radius:0 6px 6px 0;
-  font-size:21px;font-weight:600;color:#ff6b6b;
-  font-style:italic;line-height:1.45;max-width:820px;
-}
 .progress{
-  position:absolute;bottom:30px;left:80px;
+  position:absolute;bottom:28px;left:80px;
   display:flex;align-items:center;gap:8px;z-index:2;
 }
 .dot{width:7px;height:7px;border-radius:50%;background:#2a2a2a;}
 .dot.active{width:28px;border-radius:4px;background:#ff4444;}
-</style>
-</head>
-<body>
+`;
+
+function progressDots(index, total) {
+  return Array.from({ length: total }, (_, i) =>
+    `<span class="dot${i === index ? ' active' : ''}"></span>`
+  ).join('');
+}
+
+function sectionLabel(index, total, type) {
+  const labels = { bullets:'OVERVIEW', diagram:'DIAGRAM', code:'CODE', stats:'STATS', quote:'INSIGHT' };
+  return `<div class="section-label">Section ${index + 1} of ${total} · ${labels[type] || type.toUpperCase()}</div>`;
+}
+
+// ── Slide type builders ────────────────────────────────────────────────────────
+
+function buildSlideHTML(section, index, total) {
+  switch (section.type) {
+    case 'diagram': return buildDiagramSlide(section, index, total);
+    case 'code':    return buildCodeSlide(section, index, total);
+    case 'stats':   return buildStatsSlide(section, index, total);
+    case 'quote':   return buildQuoteSlide(section, index, total);
+    default:        return buildBulletsSlide(section, index, total);
+  }
+}
+
+function buildBulletsSlide(section, index, total) {
+  const bullets = (section.bullets || [])
+    .map((b, i) => `<li style="animation-delay:${(i + 1) * 0.2}s">${escHtml(b)}</li>`)
+    .join('\n    ');
+  const stat = section.stat
+    ? `<div class="stat-callout">${escHtml(section.stat)}</div>` : '';
+
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+${SLIDE_BASE_CSS}
+@keyframes slideIn{from{opacity:0;transform:translateX(-22px)}to{opacity:1;transform:translateX(0)}}
+ul.bullets{list-style:none;margin-bottom:20px;}
+ul.bullets li{
+  font-size:23px;color:#c0c0c0;line-height:1.5;
+  margin-bottom:12px;padding-left:28px;position:relative;
+  opacity:0;animation:slideIn 0.4s ease forwards;
+}
+ul.bullets li::before{content:'—';position:absolute;left:0;color:#ff4444;font-weight:700;}
+.stat-callout{
+  background:rgba(255,68,68,.09);border-left:3px solid #ff4444;
+  padding:14px 20px;border-radius:0 6px 6px 0;
+  font-size:19px;font-weight:600;color:#ff6b6b;font-style:italic;
+  line-height:1.45;max-width:820px;
+  opacity:0;animation:slideIn 0.4s ease 1s forwards;
+}
+</style></head><body>
 <div class="content">
-  <div class="section-label">Section ${index + 1} of ${total}</div>
+  ${sectionLabel(index, total, 'bullets')}
   <h1 class="title">${escHtml(section.title)}</h1>
-  <ul class="bullets">
-    ${bullets}
-  </ul>
+  <ul class="bullets">${bullets}</ul>
   ${stat}
 </div>
-<div class="progress">${dots}</div>
-</body>
-</html>`;
+<div class="progress">${progressDots(index, total)}</div>
+</body></html>`;
+}
+
+function buildDiagramSlide(section, index, total) {
+  const mermaidCode = section.mermaid_code || 'graph LR\n  A[Start] --> B[End]';
+
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+${SLIDE_BASE_CSS}
+.diagram-wrap{
+  flex:1;display:flex;align-items:center;justify-content:center;
+  max-width:960px;margin:0 auto;
+}
+.mermaid{max-width:100%;}
+.mermaid svg{max-width:100%;max-height:460px;}
+</style>
+<script>mermaid.initialize({theme:'dark',startOnLoad:true,fontFamily:'Inter'});</script>
+</head><body>
+<div class="content">
+  ${sectionLabel(index, total, 'diagram')}
+  <h1 class="title">${escHtml(section.title)}</h1>
+  <div class="diagram-wrap">
+    <div class="mermaid">${mermaidCode}</div>
+  </div>
+</div>
+<div class="progress">${progressDots(index, total)}</div>
+</body></html>`;
+}
+
+function buildCodeSlide(section, index, total) {
+  const lang    = (section.code_language || 'text').toLowerCase();
+  const snippet = escHtml(section.code_snippet || '// No code provided');
+
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-${escHtml(lang)}.min.js" onerror="void 0"></script>
+<style>
+${SLIDE_BASE_CSS}
+@keyframes revealCode{from{clip-path:inset(0 100% 0 0)}to{clip-path:inset(0 0% 0 0)}}
+.code-wrap{
+  position:relative;background:#1e1e1e;border-radius:10px;
+  border:1px solid #333;overflow:hidden;max-width:940px;flex:1;
+}
+.lang-badge{
+  position:absolute;top:12px;right:14px;
+  background:#ff4444;color:#fff;font-size:11px;font-weight:700;
+  letter-spacing:1px;text-transform:uppercase;padding:3px 8px;border-radius:4px;
+  z-index:1;
+}
+pre[class*="language-"]{
+  margin:0;padding:28px 24px;background:transparent;
+  font-family:'Fira Code',monospace;font-size:18px;line-height:1.65;
+  overflow-x:auto;max-height:400px;overflow-y:auto;
+}
+code[class*="language-"]{animation:revealCode 1.2s steps(50) forwards;}
+</style></head><body>
+<div class="content">
+  ${sectionLabel(index, total, 'code')}
+  <h1 class="title">${escHtml(section.title)}</h1>
+  <div class="code-wrap">
+    <span class="lang-badge">${escHtml(lang)}</span>
+    <pre class="language-${escHtml(lang)}"><code class="language-${escHtml(lang)}">${snippet}</code></pre>
+  </div>
+</div>
+<div class="progress">${progressDots(index, total)}</div>
+</body></html>`;
+}
+
+function buildStatsSlide(section, index, total) {
+  const statNum  = String(section.stat_number || '?');
+  const label    = section.stat_label   || '';
+  const context  = section.stat_context || '';
+
+  // Extract numeric part for count-up animation
+  const match = statNum.match(/([\d,]+\.?\d*)/);
+  const rawNum = match ? parseFloat(match[1].replace(/,/g, '')) : null;
+  const prefix = match ? statNum.slice(0, match.index) : '';
+  const suffix = match ? statNum.slice(match.index + match[1].length) : '';
+  const isFloat = rawNum !== null && rawNum !== Math.floor(rawNum);
+
+  const countUpScript = rawNum !== null ? `
+<script>
+(function(){
+  const el=document.getElementById('stat-num');
+  const target=${rawNum};const dur=1600;const start=performance.now();
+  function tick(now){
+    const t=Math.min((now-start)/dur,1);
+    const ease=1-Math.pow(1-t,3);
+    const v=target*ease;
+    el.textContent='${prefix}'+(${isFloat}?v.toFixed(1):Math.round(v).toLocaleString())+'${suffix}';
+    if(t<1)requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+})();
+</script>` : '';
+
+  const startDisplay = rawNum !== null
+    ? `${prefix}0${suffix}`
+    : escHtml(statNum);
+
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+${SLIDE_BASE_CSS}
+@keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+.stat-number{
+  font-size:148px;font-weight:900;line-height:1;
+  color:#ff4444;letter-spacing:-4px;margin-bottom:14px;
+  font-variant-numeric:tabular-nums;
+}
+.stat-label{
+  font-size:30px;font-weight:600;color:#e8e8e8;
+  max-width:780px;line-height:1.3;margin-bottom:12px;
+  animation:fadeUp 0.5s ease 0.6s both;
+}
+.stat-context{
+  font-size:17px;color:#555;max-width:640px;line-height:1.5;
+  animation:fadeUp 0.5s ease 1s both;
+}
+</style></head><body>
+<div class="content">
+  ${sectionLabel(index, total, 'stats')}
+  <h1 class="title">${escHtml(section.title)}</h1>
+  <div class="stat-number" id="stat-num">${startDisplay}</div>
+  <div class="stat-label">${escHtml(label)}</div>
+  ${context ? `<div class="stat-context">${escHtml(context)}</div>` : ''}
+</div>
+<div class="progress">${progressDots(index, total)}</div>
+${countUpScript}
+</body></html>`;
+}
+
+function buildQuoteSlide(section, index, total) {
+  const text   = section.quote_text   || '';
+  const author = section.quote_author || '';
+
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,600;0,700;0,800;1,400;1,600&display=swap" rel="stylesheet">
+<style>
+${SLIDE_BASE_CSS}
+body{background:linear-gradient(135deg,#0f0f0f 0%,#1a0808 100%);}
+@keyframes fadeIn{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
+.quote-wrap{
+  flex:1;display:flex;flex-direction:column;justify-content:center;
+  max-width:900px;animation:fadeIn 0.7s ease forwards;
+}
+.quote-mark{
+  font-size:110px;line-height:.65;font-family:Georgia,serif;
+  color:#ff4444;opacity:.35;margin-bottom:6px;display:block;
+}
+.quote-text{
+  font-size:32px;font-style:italic;font-weight:600;
+  line-height:1.5;color:#e8e8e8;margin-bottom:28px;max-width:840px;
+}
+.quote-author{
+  font-size:19px;font-weight:700;color:#ff4444;letter-spacing:.5px;
+}
+.quote-author::before{content:'— ';}
+</style></head><body>
+<div class="content">
+  ${sectionLabel(index, total, 'quote')}
+  <div class="quote-wrap">
+    <span class="quote-mark">"</span>
+    <p class="quote-text">${escHtml(text)}</p>
+    <span class="quote-author">${escHtml(author)}</span>
+  </div>
+</div>
+<div class="progress">${progressDots(index, total)}</div>
+</body></html>`;
 }
 
 /// ── Step 4: Resolve HeyGen video (local file or remote URL) ───────────────────

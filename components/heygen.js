@@ -37,7 +37,10 @@ export function renderHeyGen(container) {
         <button class="btn btn-primary" id="hg-copy-btn">Copy Cleaned Script</button>
         <a href="https://www.heygen.com" target="_blank" rel="noopener"
           class="btn btn-secondary">Open HeyGen ↗</a>
+        <button class="btn btn-secondary" id="hg-preview-slides-btn">📋 Preview Slides</button>
       </div>
+
+      <div id="hg-slides-preview" style="display:none;margin-top:20px;"></div>
 
       <div class="status-bar info"
         style="flex-direction:column;align-items:flex-start;gap:8px;margin-top:16px;padding:16px;">
@@ -165,6 +168,10 @@ export function renderHeyGen(container) {
     updateScriptMeta(container, cleaned);
   };
 
+  container.querySelector('#hg-preview-slides-btn').addEventListener('click', () => {
+    previewSlides(container);
+  });
+
   container.querySelector('#hg-copy-btn').addEventListener('click', () => {
     const text = container.querySelector('#hg-script').value;
     if (!text) return;
@@ -248,6 +255,134 @@ export function renderHeyGen(container) {
     if (topic)  container._topic = topic;
     if (script) container._setScript(script);
   });
+}
+
+// ── Slide Preview ──────────────────────────────────────────────────────────────
+
+const TYPE_ICONS = { diagram:'📊', code:'💻', stats:'📈', quote:'💬', bullets:'📝' };
+
+async function previewSlides(container) {
+  const script = container.querySelector('#hg-script').value.trim();
+  const topic  = container._topic || '';
+  const previewEl = container.querySelector('#hg-slides-preview');
+  const btn    = container.querySelector('#hg-preview-slides-btn');
+
+  if (!script) {
+    previewEl.style.display = 'block';
+    previewEl.innerHTML = `<div class="status-bar error">Paste or generate a script first.</div>`;
+    return;
+  }
+
+  const { claudeApiKey } = getSettings();
+  if (!claudeApiKey) {
+    previewEl.style.display = 'block';
+    previewEl.innerHTML = `<div class="status-bar error">Add your Anthropic API key in ⚙ Settings to preview slides.</div>`;
+    return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="loader"></span> Analysing…';
+  previewEl.style.display = 'block';
+  previewEl.innerHTML = `<div class="status-bar info"><span class="loader"></span> Asking Claude to plan slide layout…</div>`;
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': claudeApiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 2048,
+        messages: [{
+          role: 'user',
+          content: `You are planning slides for a YouTube video.
+
+Topic: ${topic || 'YouTube Video'}
+
+Script (first 3000 chars):
+"""
+${script.slice(0, 3000)}
+"""
+
+Split into 5-8 sections. For each section choose the best slide type:
+- "diagram"  — for flows, processes, comparisons
+- "code"     — when implementation or commands are discussed
+- "stats"    — when a compelling number anchors the section
+- "quote"    — for key insights or expert opinions
+- "bullets"  — default for general explanations
+
+Return ONLY valid JSON, no markdown fences:
+{"sections":[{"title":"slide title (4-7 words)","type":"bullets","duration_seconds":30}]}`,
+        }],
+      }),
+    });
+
+    if (!res.ok) throw new Error(`API error ${res.status}`);
+    const data = await res.json();
+    let raw = (data.content?.find(b => b.type === 'text')?.text || '').trim();
+    raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+    const sections = JSON.parse(raw).sections || [];
+
+    renderSlidePreviewGrid(previewEl, sections);
+  } catch (err) {
+    previewEl.innerHTML = `<div class="status-bar error">${escHtmlHeyGen(err.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '📋 Preview Slides';
+  }
+}
+
+function renderSlidePreviewGrid(el, sections) {
+  const totalSecs = sections.reduce((s, sec) => s + (sec.duration_seconds || 30), 0);
+  const mins = Math.floor(totalSecs / 60);
+  const secs = totalSecs % 60;
+
+  el.innerHTML = `
+    <div style="margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+      <strong style="font-size:0.95rem;">
+        ${sections.length} slides · Est. ${mins}m${secs > 0 ? ` ${secs}s` : ''}
+      </strong>
+      <span style="font-size:0.82rem;color:var(--muted);">
+        ${sections.filter(s=>s.type==='diagram').length} diagrams ·
+        ${sections.filter(s=>s.type==='code').length} code ·
+        ${sections.filter(s=>s.type==='stats').length} stats ·
+        ${sections.filter(s=>s.type==='quote').length} quotes ·
+        ${sections.filter(s=>!s.type||s.type==='bullets').length} bullets
+      </span>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;">
+      ${sections.map((s, i) => {
+        const type = s.type || 'bullets';
+        const icon = TYPE_ICONS[type] || '📝';
+        return `
+          <div style="background:var(--surface2);border:1px solid var(--border);
+                      border-radius:var(--radius);padding:12px 14px;display:flex;align-items:flex-start;gap:10px;">
+            <span style="font-size:1.3rem;flex-shrink:0;margin-top:1px;">${icon}</span>
+            <div style="flex:1;min-width:0;">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+                <span style="font-size:0.75rem;font-weight:700;color:var(--muted);">${i + 1}</span>
+                <span style="font-size:0.7rem;font-weight:700;background:var(--accent);
+                             color:#fff;padding:1px 7px;border-radius:20px;text-transform:uppercase;
+                             letter-spacing:.5px;">${type}</span>
+              </div>
+              <div style="font-size:0.88rem;font-weight:600;line-height:1.3;">
+                ${escHtmlHeyGen(s.title || 'Untitled')}
+              </div>
+              <div style="font-size:0.77rem;color:var(--muted);margin-top:3px;">
+                ~${s.duration_seconds || 30}s
+              </div>
+            </div>
+          </div>`;
+      }).join('')}
+    </div>`;
+}
+
+function escHtmlHeyGen(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
