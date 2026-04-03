@@ -229,19 +229,44 @@ async function generateSlides(sections) {
   }
 
   // Screenshot with Puppeteer — wait time varies by slide type
-  const WAIT_MS = { bullets: 1500, diagram: 2500, code: 1500, stats: 2000, quote: 1000 };
+  const WAIT_MS = { bullets: 1500, diagram: 3000, code: 1500, stats: 2000, quote: 1000 };
 
   const browser = await puppeteer.launch({ headless: true });
   const page    = await browser.newPage();
-  await page.setViewport({ width: 1280, height: 720, deviceScaleFactor: 1 });
+  // deviceScaleFactor:2 = retina/2x resolution → sharper text after FFmpeg scaling
+  await page.setViewport({ width: 1280, height: 720, deviceScaleFactor: 2 });
 
   for (let i = 0; i < total; i++) {
     const htmlPath = path.join(SLIDES_DIR, `slide-${i}.html`);
     await page.goto(`file://${htmlPath}`, { waitUntil: 'networkidle0', timeout: 30_000 });
+
+    // Wait for web fonts to finish loading before any animation wait
+    await page.evaluateHandle('document.fonts.ready');
+    await new Promise(r => setTimeout(r, 500)); // extra buffer after fonts
+
+    // Additional wait for animations/Mermaid/count-up
     const waitMs = WAIT_MS[sections[i].type] || 1500;
     await new Promise(r => setTimeout(r, waitMs));
+
+    // For diagram slides: log SVG dimensions to help debug sizing issues
+    if (sections[i].type === 'diagram') {
+      const svgDims = await page.evaluate(() => {
+        const svg = document.querySelector('.mermaid svg');
+        if (!svg) return null;
+        const r = svg.getBoundingClientRect();
+        return { w: Math.round(r.width), h: Math.round(r.height) };
+      });
+      if (svgDims) log(`     Mermaid SVG: ${svgDims.w}×${svgDims.h}px`);
+      else          log('     ⚠ Mermaid SVG not found — diagram may not have rendered');
+    }
+
     const pngPath = path.join(SLIDES_DIR, `slide-${i}.png`);
-    await page.screenshot({ path: pngPath });
+    await page.screenshot({
+      path: pngPath,
+      type: 'png',
+      fullPage: false,
+      clip: { x: 0, y: 0, width: 1280, height: 720 },
+    });
     log(`   ✓ slide-${i}.png (${sections[i].type || 'bullets'})`);
   }
 
@@ -269,17 +294,18 @@ body::before{
 .content{
   position:absolute;left:0;top:0;
   width:1280px;height:720px;
-  padding:60px 80px;
+  /* padding-bottom:220px keeps content clear of the avatar PIP overlay */
+  padding:56px 80px 220px;
   display:flex;flex-direction:column;
   z-index:1;
 }
 .section-label{
   font-size:11px;font-weight:700;letter-spacing:5px;
-  color:#ff4444;text-transform:uppercase;margin-bottom:18px;opacity:.85;
+  color:#ff4444;text-transform:uppercase;margin-bottom:16px;opacity:.85;
 }
 .title{
-  font-size:48px;font-weight:800;line-height:1.1;
-  color:#fff;margin-bottom:26px;letter-spacing:-1px;
+  font-size:52px;font-weight:800;line-height:1.1;
+  color:#fff;margin-bottom:24px;letter-spacing:-1px;
   max-width:900px;
 }
 .progress{
@@ -327,8 +353,8 @@ ${SLIDE_BASE_CSS}
 @keyframes slideIn{from{opacity:0;transform:translateX(-22px)}to{opacity:1;transform:translateX(0)}}
 ul.bullets{list-style:none;margin-bottom:20px;}
 ul.bullets li{
-  font-size:23px;color:#c0c0c0;line-height:1.5;
-  margin-bottom:12px;padding-left:28px;position:relative;
+  font-size:28px;color:#c0c0c0;line-height:1.5;
+  margin-bottom:12px;padding-left:32px;position:relative;
   opacity:0;animation:slideIn 0.4s ease forwards;
 }
 ul.bullets li::before{content:'—';position:absolute;left:0;color:#ff4444;font-weight:700;}
@@ -360,12 +386,26 @@ function buildDiagramSlide(section, index, total) {
 ${SLIDE_BASE_CSS}
 .diagram-wrap{
   flex:1;display:flex;align-items:center;justify-content:center;
-  max-width:960px;margin:0 auto;
+  overflow:hidden;
 }
-.mermaid{max-width:100%;}
-.mermaid svg{max-width:100%;max-height:460px;}
+.mermaid{
+  width:100%;max-width:1100px;
+  transform:scale(1.2);transform-origin:top center;
+}
+.mermaid svg{
+  max-width:100%;height:auto;
+  min-width:400px;
+}
 </style>
-<script>mermaid.initialize({theme:'dark',startOnLoad:true,fontFamily:'Inter'});</script>
+<script>
+mermaid.initialize({
+  theme: 'dark',
+  startOnLoad: true,
+  fontSize: 18,
+  flowchart: { nodeSpacing: 50, rankSpacing: 60, padding: 20 },
+  themeVariables: { fontSize: '18px', fontFamily: 'Inter, sans-serif' },
+});
+</script>
 </head><body>
 <div class="content">
   ${sectionLabel(index, total, 'diagram')}
@@ -378,41 +418,67 @@ ${SLIDE_BASE_CSS}
 </body></html>`;
 }
 
+// Simple inline keyword colorizer — no CDN dependency.
+// Operates on already-HTML-escaped code.
+function colorizeCode(escaped) {
+  return escaped
+    // Line comments — whole line green (do first to avoid re-coloring tokens inside)
+    .replace(/(\/\/[^\n]*)/g,
+      '<span style="color:#6a9955">$1</span>')
+    // Single-quoted strings
+    .replace(/('[^'\n\\]*(?:\\.[^'\n\\]*)*')/g,
+      '<span style="color:#ce9178">$1</span>')
+    // Double-quoted strings (HTML-escaped as &quot;...&quot;)
+    .replace(/(&quot;[^<\n]*?&quot;)/g,
+      '<span style="color:#ce9178">$1</span>')
+    // Keywords
+    .replace(/\b(const|let|var|function|return|if|else|import|export|class|async|await|for|while|do|switch|case|break|continue|new|delete|typeof|instanceof|true|false|null|undefined)\b/g,
+      '<span style="color:#569cd6">$1</span>')
+    // Numbers
+    .replace(/\b(\d+\.?\d*)\b/g,
+      '<span style="color:#b5cea8">$1</span>');
+}
+
 function buildCodeSlide(section, index, total) {
-  const lang    = (section.code_language || 'text').toLowerCase();
-  const snippet = escHtml(section.code_snippet || '// No code provided');
+  const lang = (section.code_language || 'text').toLowerCase();
+
+  // Truncate to first 20 lines
+  const rawLines = (section.code_snippet || '// No code provided').split('\n');
+  const truncated = rawLines.length > 20
+    ? [...rawLines.slice(0, 20), '// ... (continued)']
+    : rawLines;
+  const escapedCode = colorizeCode(escHtml(truncated.join('\n')));
 
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
-<link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-${escHtml(lang)}.min.js" onerror="void 0"></script>
 <style>
 ${SLIDE_BASE_CSS}
-@keyframes revealCode{from{clip-path:inset(0 100% 0 0)}to{clip-path:inset(0 0% 0 0)}}
-.code-wrap{
-  position:relative;background:#1e1e1e;border-radius:10px;
-  border:1px solid #333;overflow:hidden;max-width:940px;flex:1;
-}
+.code-outer{position:relative;flex:1;max-width:1060px;}
 .lang-badge{
-  position:absolute;top:12px;right:14px;
-  background:#ff4444;color:#fff;font-size:11px;font-weight:700;
-  letter-spacing:1px;text-transform:uppercase;padding:3px 8px;border-radius:4px;
+  position:absolute;top:16px;right:16px;
+  background:#569cd6;color:#fff;
+  padding:4px 12px;border-radius:4px;
+  font-size:14px;font-weight:700;letter-spacing:.5px;
   z-index:1;
 }
-pre[class*="language-"]{
-  margin:0;padding:28px 24px;background:transparent;
-  font-family:'Fira Code',monospace;font-size:18px;line-height:1.65;
-  overflow-x:auto;max-height:400px;overflow-y:auto;
+pre{
+  background:#1e1e1e;border-radius:8px;
+  padding:30px;margin:0;overflow:auto;
+  border:1px solid #333;
 }
-code[class*="language-"]{animation:revealCode 1.2s steps(50) forwards;}
+code{
+  font-family:'Fira Code','Courier New',monospace;
+  font-size:22px;line-height:1.6;
+  color:#d4d4d4;white-space:pre;
+  display:block;
+}
 </style></head><body>
 <div class="content">
   ${sectionLabel(index, total, 'code')}
   <h1 class="title">${escHtml(section.title)}</h1>
-  <div class="code-wrap">
-    <span class="lang-badge">${escHtml(lang)}</span>
-    <pre class="language-${escHtml(lang)}"><code class="language-${escHtml(lang)}">${snippet}</code></pre>
+  <div class="code-outer">
+    <div class="lang-badge">${escHtml(lang.toUpperCase())}</div>
+    <pre><code>${escapedCode}</code></pre>
   </div>
 </div>
 <div class="progress">${progressDots(index, total)}</div>
@@ -457,12 +523,12 @@ function buildStatsSlide(section, index, total) {
 ${SLIDE_BASE_CSS}
 @keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
 .stat-number{
-  font-size:148px;font-weight:900;line-height:1;
+  font-size:140px;font-weight:900;line-height:1;
   color:#ff4444;letter-spacing:-4px;margin-bottom:14px;
   font-variant-numeric:tabular-nums;
 }
 .stat-label{
-  font-size:30px;font-weight:600;color:#e8e8e8;
+  font-size:32px;font-weight:600;color:#e8e8e8;
   max-width:780px;line-height:1.3;margin-bottom:12px;
   animation:fadeUp 0.5s ease 0.6s both;
 }
@@ -502,8 +568,8 @@ body{background:linear-gradient(135deg,#0f0f0f 0%,#1a0808 100%);}
   color:#ff4444;opacity:.35;margin-bottom:6px;display:block;
 }
 .quote-text{
-  font-size:32px;font-style:italic;font-weight:600;
-  line-height:1.5;color:#e8e8e8;margin-bottom:28px;max-width:840px;
+  font-size:40px;font-style:italic;font-weight:600;
+  line-height:1.45;color:#e8e8e8;margin-bottom:28px;max-width:840px;
 }
 .quote-author{
   font-size:19px;font-weight:700;color:#ff4444;letter-spacing:.5px;
