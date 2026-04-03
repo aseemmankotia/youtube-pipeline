@@ -54,7 +54,7 @@ async function main() {
   }
 
   const input = JSON.parse(fs.readFileSync(INPUT_FILE, 'utf8'));
-  const { topic, script, output_filename = 'final-video.mp4' } = input;
+  const { topic, script, hook = '', niche = '', output_filename = 'final-video.mp4' } = input;
 
   if (!script) die('script is missing from render-input.json');
   if (!input.heygen_local_file && !input.heygen_video_url)
@@ -68,8 +68,12 @@ async function main() {
 
   // ── Step 1: Split script into sections ──────────────────────────────────────
   log('\n🤖 Step 1 — Splitting script into sections via Anthropic API…');
-  const sections = await splitScript(script, topic);
-  log(`   ✓ ${sections.length} sections`);
+  const contentSections = await splitScript(script, topic);
+  log(`   ✓ ${contentSections.length} sections`);
+
+  // Prepend branded title slide (fixed 4 s)
+  const titleSection = { type: 'title', title: topic, hook, niche, duration_seconds: 4 };
+  const sections = [titleSection, ...contentSections];
 
   // ── Steps 2 & 3: Generate HTML slides + screenshot ──────────────────────────
   log('\n🎨 Steps 2-3 — Generating and screenshotting slides…');
@@ -194,7 +198,7 @@ Return ONLY valid JSON — no markdown fences, no explanation:
 Rules:
 - Omit fields that don't apply to the chosen type
 - bullets: 2-4 points each ≤12 words; stat field optional (striking number/fact or null)
-- diagram: valid Mermaid.js syntax only — no HTML, no markdown, escape backslashes as \\n
+- diagram: valid Mermaid.js syntax only — use flowchart LR or flowchart TD, max 6 nodes, node labels ≤3 words, no subgraphs, no style/classDef blocks, escape newlines as \\n
 - code: syntactically correct snippet; code_language lowercase (javascript/python/bash/etc.)
 - stats: stat_number includes unit/symbol (%, x, M, K); stat_context is one short attribution sentence
 - quote: concise and impactful; real attribution in quote_author
@@ -229,7 +233,7 @@ async function generateSlides(sections) {
   }
 
   // Screenshot with Puppeteer — wait time varies by slide type
-  const WAIT_MS = { bullets: 1500, diagram: 3000, code: 1500, stats: 2000, quote: 1000 };
+  const WAIT_MS = { title: 800, bullets: 1500, diagram: 3000, code: 1500, stats: 2000, quote: 1000 };
 
   const browser = await puppeteer.launch({ headless: true });
   const page    = await browser.newPage();
@@ -248,16 +252,44 @@ async function generateSlides(sections) {
     const waitMs = WAIT_MS[sections[i].type] || 1500;
     await new Promise(r => setTimeout(r, waitMs));
 
-    // For diagram slides: log SVG dimensions to help debug sizing issues
+    // For diagram slides: scale SVG to fit container; fall back to bullets if missing
     if (sections[i].type === 'diagram') {
-      const svgDims = await page.evaluate(() => {
-        const svg = document.querySelector('.mermaid svg');
-        if (!svg) return null;
-        const r = svg.getBoundingClientRect();
-        return { w: Math.round(r.width), h: Math.round(r.height) };
+      const svgInfo = await page.evaluate(() => {
+        const svg  = document.querySelector('.mermaid svg');
+        const wrap = document.querySelector('.diagram-wrap');
+        if (!svg || !wrap) return null;
+        const sr = svg.getBoundingClientRect();
+        const wr = wrap.getBoundingClientRect();
+        if (!sr.width || sr.height < 60) return null;  // <60px = failed render
+        const scaleX = wr.width  / sr.width;
+        const scaleY = wr.height / sr.height;
+        const scale  = Math.min(scaleX, scaleY, 1.0);  // only shrink, never enlarge
+        if (scale < 0.99) {
+          svg.style.transform       = `scale(${scale.toFixed(3)})`;
+          svg.style.transformOrigin = 'top center';
+        }
+        return { svgW: Math.round(sr.width), svgH: Math.round(sr.height), scale: +scale.toFixed(3) };
       });
-      if (svgDims) log(`     Mermaid SVG: ${svgDims.w}×${svgDims.h}px`);
-      else          log('     ⚠ Mermaid SVG not found — diagram may not have rendered');
+
+      if (svgInfo) {
+        log(`     Mermaid SVG: ${svgInfo.svgW}×${svgInfo.svgH}px (scale ${svgInfo.scale})`);
+      } else {
+        // SVG missing — Mermaid failed to render; fall back to a bullets slide
+        log(`     ⚠ Mermaid SVG not found — falling back to bullets slide`);
+        const fallback = {
+          type: 'bullets',
+          title: sections[i].title,
+          bullets: sections[i].bullets && sections[i].bullets.length
+            ? sections[i].bullets
+            : ['See diagram in accompanying materials'],
+        };
+        const fallbackHtml = buildSlideHTML(fallback, i, sections.length);
+        fs.writeFileSync(path.join(SLIDES_DIR, `slide-${i}.html`), fallbackHtml, 'utf8');
+        await page.goto(`file://${path.join(SLIDES_DIR, `slide-${i}.html`)}`,
+          { waitUntil: 'networkidle0', timeout: 30_000 });
+        await page.evaluateHandle('document.fonts.ready');
+        await new Promise(r => setTimeout(r, 1500));
+      }
     }
 
     const pngPath = path.join(SLIDES_DIR, `slide-${i}.png`);
@@ -314,7 +346,16 @@ body::before{
 }
 .dot{width:7px;height:7px;border-radius:50%;background:#2a2a2a;}
 .dot.active{width:28px;border-radius:4px;background:#ff4444;}
+.brand{
+  position:absolute;bottom:230px;right:20px;
+  font-size:13px;color:#333;font-weight:500;
+  letter-spacing:0.03em;z-index:3;pointer-events:none;
+}
 `;
+
+function brandingHtml() {
+  return `<div class="brand"><span style="color:#ff4444;margin-right:5px;">●</span>TechNuggets by Aseem</div>`;
+}
 
 function progressDots(index, total) {
   return Array.from({ length: total }, (_, i) =>
@@ -331,12 +372,81 @@ function sectionLabel(index, total, type) {
 
 function buildSlideHTML(section, index, total) {
   switch (section.type) {
+    case 'title':   return buildTitleSlide(section);
     case 'diagram': return buildDiagramSlide(section, index, total);
     case 'code':    return buildCodeSlide(section, index, total);
     case 'stats':   return buildStatsSlide(section, index, total);
     case 'quote':   return buildQuoteSlide(section, index, total);
     default:        return buildBulletsSlide(section, index, total);
   }
+}
+
+function buildTitleSlide(section) {
+  const date  = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const niche = section.niche ? escHtml(section.niche) : '';
+  const hook  = section.hook  ? escHtml(section.hook)  : '';
+
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+body{
+  width:1280px;height:720px;
+  background:#0f0f0f;
+  font-family:'Inter',system-ui,sans-serif;
+  color:#fff;overflow:hidden;position:relative;
+}
+body::before{
+  content:'';position:absolute;inset:0;
+  background-image:
+    linear-gradient(rgba(255,255,255,.03) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(255,255,255,.03) 1px,transparent 1px);
+  background-size:48px 48px;pointer-events:none;
+}
+.center{
+  position:absolute;inset:0;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  text-align:center;padding:60px 80px;
+}
+.niche-pill{
+  background:#1a1a1a;border:1px solid #333;
+  color:#888;font-size:16px;padding:6px 16px;
+  border-radius:20px;margin-bottom:40px;
+  letter-spacing:0.02em;
+}
+.video-title{
+  font-size:64px;font-weight:700;line-height:1.2;
+  color:#ffffff;max-width:900px;text-align:center;
+}
+.accent-line{
+  width:80px;height:3px;background:#ff4444;
+  margin:24px auto;border-radius:2px;
+}
+.hook-text{
+  font-size:24px;color:#aaaaaa;
+  max-width:700px;text-align:center;font-style:italic;
+  line-height:1.5;
+}
+.brand-bottom-right{
+  position:absolute;bottom:40px;right:50px;
+  font-size:18px;color:#555;font-weight:500;letter-spacing:0.05em;
+}
+.date-bottom-left{
+  position:absolute;bottom:40px;left:50px;
+  font-size:16px;color:#444;
+}
+</style></head><body>
+<div class="center">
+  ${niche ? `<div class="niche-pill">${niche}</div>` : ''}
+  <h1 class="video-title">${escHtml(section.title || '')}</h1>
+  <div class="accent-line"></div>
+  ${hook ? `<p class="hook-text">${hook}</p>` : ''}
+</div>
+<div class="brand-bottom-right">
+  <span style="color:#ff4444;margin-right:8px;">●</span>TechNuggets by Aseem
+</div>
+<div class="date-bottom-left">${date}</div>
+</body></html>`;
 }
 
 function buildBulletsSlide(section, index, total) {
@@ -373,6 +483,7 @@ ul.bullets li::before{content:'—';position:absolute;left:0;color:#ff4444;font-
   ${stat}
 </div>
 <div class="progress">${progressDots(index, total)}</div>
+${brandingHtml()}
 </body></html>`;
 }
 
@@ -385,16 +496,16 @@ function buildDiagramSlide(section, index, total) {
 <style>
 ${SLIDE_BASE_CSS}
 .diagram-wrap{
-  flex:1;display:flex;align-items:center;justify-content:center;
+  position:absolute;
+  top:180px;left:40px;right:40px;bottom:210px;
+  display:flex;align-items:center;justify-content:center;
   overflow:hidden;
 }
 .mermaid{
-  width:100%;max-width:1100px;
-  transform:scale(1.2);transform-origin:top center;
+  max-width:100%;max-height:100%;
 }
 .mermaid svg{
-  max-width:100%;height:auto;
-  min-width:400px;
+  display:block;max-width:100%;max-height:100%;
 }
 </style>
 <script>
@@ -415,6 +526,7 @@ mermaid.initialize({
   </div>
 </div>
 <div class="progress">${progressDots(index, total)}</div>
+${brandingHtml()}
 </body></html>`;
 }
 
@@ -482,6 +594,7 @@ code{
   </div>
 </div>
 <div class="progress">${progressDots(index, total)}</div>
+${brandingHtml()}
 </body></html>`;
 }
 
@@ -545,6 +658,7 @@ ${SLIDE_BASE_CSS}
   ${context ? `<div class="stat-context">${escHtml(context)}</div>` : ''}
 </div>
 <div class="progress">${progressDots(index, total)}</div>
+${brandingHtml()}
 ${countUpScript}
 </body></html>`;
 }
@@ -585,6 +699,7 @@ body{background:linear-gradient(135deg,#0f0f0f 0%,#1a0808 100%);}
   </div>
 </div>
 <div class="progress">${progressDots(index, total)}</div>
+${brandingHtml()}
 </body></html>`;
 }
 
@@ -663,11 +778,14 @@ function hasAudioStream(ffprobe, videoPath) {
 }
 
 function distributeDurations(sections, totalDuration) {
-  const sum = sections.reduce((a, s) => a + (s.duration_seconds || 30), 0);
-  return sections.map(s => ({
-    ...s,
-    duration: Math.max(((s.duration_seconds || 30) / sum) * totalDuration, 1.5),
-  }));
+  const TITLE_DUR = 4; // title slide always exactly 4 s
+  const content   = sections.filter(s => s.type !== 'title');
+  const remaining = totalDuration - TITLE_DUR;
+  const sum       = content.reduce((a, s) => a + (s.duration_seconds || 30), 0);
+  return sections.map(s => {
+    if (s.type === 'title') return { ...s, duration: TITLE_DUR };
+    return { ...s, duration: Math.max(((s.duration_seconds || 30) / sum) * remaining, 1.5) };
+  });
 }
 
 // ── Step 6: Composite ──────────────────────────────────────────────────────────

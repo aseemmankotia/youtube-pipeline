@@ -155,10 +155,17 @@ export function renderHeyGen(container) {
 
   // ── State ──────────────────────────────────────────────────────────────────
   container._topic      = '';
+  container._hook       = '';
+  container._niche      = '';
   container._rawScript  = '';
   container._videoId    = '';
   container._fileObj    = null;   // File object from drop zone
   container._fileObjUrl = '';     // Blob URL for the dropped file
+
+  container._setTopicMeta = (topic, niche) => {
+    container._hook  = topic?.hook  || '';
+    container._niche = niche        || '';
+  };
 
   // ── Stage A: populate script ───────────────────────────────────────────────
   container._setScript = (rawScript) => {
@@ -439,6 +446,8 @@ function prepareRenderFiles(container) {
   // render-input.json  (heygen_local_file — user places the MP4 in project dir)
   const renderInput = {
     topic,
+    hook:              container._hook  || '',
+    niche:             container._niche || '',
     script,
     heygen_local_file: file ? file.name : 'heygen-input.mp4',
     heygen_video_url:  '',

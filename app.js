@@ -52,9 +52,10 @@ document.addEventListener('settings-changed', updateSettingsDot);
 
 // ── Auto-pipeline event chain ─────────────────────────────────────────────────
 
-// Step 1 → Step 2: topic selected → pre-fill script input
-function onTopicSelect(topic) {
-  if (scriptPanel._setTopic) scriptPanel._setTopic(topic);
+// Step 1 → Step 2: topic selected → pre-fill script input + store meta for render-input
+function onTopicSelect(topic, niche) {
+  if (scriptPanel._setTopic)       scriptPanel._setTopic(topic);
+  if (videoPanel._setTopicMeta)    videoPanel._setTopicMeta(topic, niche);
 }
 
 // Step 2 → Step 3: script ready → switch to Video tab, auto-start if creds present
