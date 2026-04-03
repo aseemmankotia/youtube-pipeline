@@ -7,8 +7,16 @@ import { getSettings } from './settings.js';
 import { cleanScript } from './clean-script.js';
 
 const TONES   = ['Engaging & Energetic', 'Educational & Calm', 'Humorous & Casual', 'Inspirational', 'Documentary-Style'];
-const LENGTHS = ['Short (3–5 min)', 'Medium (8–12 min)', 'Long (18–25 min)'];
+const LENGTHS = ['Short (3–5 min)', 'Medium (8–12 min)', 'Long (18–25 min)', 'Extended (25–30 min)'];
 const STYLES  = ['Entertainment', 'Tutorial / How-To', 'Opinion / Commentary', 'News / Explainer', 'Storytime / Narrative'];
+
+// Fix 1: max_tokens mapped to video length
+const TOKEN_MAP = {
+  'Short (3–5 min)':    2000,
+  'Medium (8–12 min)':  4000,
+  'Long (18–25 min)':   6000,
+  'Extended (25–30 min)': 8000,
+};
 
 export function renderScript(container) {
   container.innerHTML = `
@@ -106,17 +114,40 @@ async function generateScript(container) {
   statusEl.innerHTML = '';
   outCard.style.display = 'none';
 
+  // Fix 5: progress indicator on a timer
+  const progressMessages = [
+    '✍️ Writing intro and hook…',
+    '✍️ Developing main sections…',
+    '✍️ Writing conclusion and CTA…',
+  ];
+  let progressStep = 0;
+  function showProgress(msg) {
+    statusEl.innerHTML = `<div class="status-bar info">${msg}</div>`;
+  }
+  showProgress(progressMessages[0]);
+  const progressTimers = [
+    setTimeout(() => showProgress(progressMessages[1]), 3000),
+    setTimeout(() => showProgress(progressMessages[2]), 6000),
+  ];
+
   try {
     let script;
     if (apiKey) {
       script = await generateWithClaude({ topic, tone, length, style, channel, apiKey, statusEl });
     } else {
       script = generateTemplate({ topic, tone, length, style, channel });
+      clearTimeout(progressTimers[0]);
+      clearTimeout(progressTimers[1]);
       statusEl.innerHTML = `
         <div class="status-bar info">
           Template mode — add a Claude API key in <strong>⚙ Settings</strong> for AI-generated scripts.
         </div>`;
     }
+
+    clearTimeout(progressTimers[0]);
+    clearTimeout(progressTimers[1]);
+    showProgress('✅ Script complete!');
+    setTimeout(() => { statusEl.innerHTML = ''; }, 2000);
 
     textEl.textContent = script;
     outCard.style.display = 'block';
@@ -152,6 +183,8 @@ async function generateScript(container) {
     };
 
   } catch (err) {
+    clearTimeout(progressTimers[0]);
+    clearTimeout(progressTimers[1]);
     statusEl.innerHTML = `<div class="status-bar error">${escHtml(err.message)}</div>`;
   } finally {
     btn.disabled = false;
@@ -179,11 +212,14 @@ async function fetchWithRetry(url, options, statusEl) {
 async function generateWithClaude({ topic, tone, length, style, channel, apiKey, statusEl }) {
   const channelLine = channel ? ` Channel: "${channel}".` : '';
 
-  // Scale max_tokens to video length to avoid hitting rate limits on short videos
-  const maxTokens = length.includes('18') || length.includes('25') ? 3000 : 2000;
+  // Fix 1: look up token budget by video length selection; default 4000
+  const maxTokens = TOKEN_MAP[length] ?? 4000;
 
+  // Fix 4: instruct Claude to always finish the script
   const prompt = `You are a YouTube scriptwriter. Write a ready-to-record ${style} script.${channelLine}
 Topic: ${topic} | Tone: ${tone} | Length: ${length}
+
+IMPORTANT: Always complete the full script including the closing CTA and sign-off. Never end mid-sentence or mid-section. If running long, condense earlier sections rather than cutting off the ending.
 
 STRUCTURE (use these labels):
 [HOOK] 15-second attention grab — bold question, surprising fact, or provocative statement.
@@ -193,33 +229,73 @@ STRUCTURE (use these labels):
 
 Write for the ear. Keep opening/closing human, not templated. Output only the script.`;
 
-  const res = await fetchWithRetry(
-    'https://api.anthropic.com/v1/messages',
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
-      body: JSON.stringify({
-        model: 'claude-opus-4-5',
-        max_tokens: maxTokens,
-        messages: [{ role: 'user', content: prompt }],
-      }),
-    },
-    statusEl
-  );
+  // Fix 3: continuation loop — up to 2 extra passes if truncated
+  let fullScript = '';
+  let messages   = [{ role: 'user', content: prompt }];
+  const MAX_CONTINUATIONS = 2;
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    if (res.status === 429) throw new Error('Rate limit hit — please wait 30 seconds and try again.');
-    throw new Error(`Claude API error: ${err?.error?.message || res.statusText}`);
+  for (let pass = 0; pass <= MAX_CONTINUATIONS; pass++) {
+    const res = await fetchWithRetry(
+      'https://api.anthropic.com/v1/messages',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model: 'claude-opus-4-5',
+          max_tokens: maxTokens,
+          messages,
+        }),
+      },
+      pass === 0 ? statusEl : null  // show status on first call only
+    );
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      if (res.status === 429) throw new Error('Rate limit hit — please wait 30 seconds and try again.');
+      throw new Error(`Claude API error: ${err?.error?.message || res.statusText}`);
+    }
+
+    const data       = await res.json();
+    const chunk      = data.content?.[0]?.text || '';
+    const stopReason = data.stop_reason;
+
+    fullScript += (pass === 0 ? chunk : chunk.trimStart());
+
+    // Fix 2: if response completed normally, we're done
+    if (stopReason !== 'max_tokens') break;
+
+    // Truncated — try to continue unless we've hit the limit
+    if (pass === MAX_CONTINUATIONS) {
+      console.warn('[script] Script truncated after max continuations');
+      // Show warning banner
+      if (statusEl) {
+        statusEl.innerHTML = `
+          <div class="status-bar error">
+            ⚠️ Script was cut off due to length limits. Try selecting a shorter video length.
+          </div>`;
+        setTimeout(() => { statusEl.innerHTML = ''; }, 6000);
+      }
+      break;
+    }
+
+    // Build continuation messages: original prompt → partial response → continue request
+    console.log(`[script] Truncated at pass ${pass} — requesting continuation…`);
+    if (statusEl) {
+      statusEl.innerHTML = `<div class="status-bar info">✍️ Script is long — fetching continuation (${pass + 1}/${MAX_CONTINUATIONS})…</div>`;
+    }
+    messages = [
+      { role: 'user',      content: prompt },
+      { role: 'assistant', content: fullScript },
+      { role: 'user',      content: 'Please continue the script from where you left off. Do not repeat anything already written. Continue seamlessly.' },
+    ];
   }
 
-  const data = await res.json();
-  return data.content?.[0]?.text || '';
+  return fullScript;
 }
 
 function generateTemplate({ topic, tone, length, style, channel }) {
