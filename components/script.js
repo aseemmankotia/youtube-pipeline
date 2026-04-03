@@ -109,7 +109,7 @@ async function generateScript(container) {
   try {
     let script;
     if (apiKey) {
-      script = await generateWithClaude({ topic, tone, length, style, channel, apiKey });
+      script = await generateWithClaude({ topic, tone, length, style, channel, apiKey, statusEl });
     } else {
       script = generateTemplate({ topic, tone, length, style, channel });
       statusEl.innerHTML = `
@@ -159,66 +159,62 @@ async function generateScript(container) {
   }
 }
 
-async function generateWithClaude({ topic, tone, length, style, channel, apiKey }) {
-  const channelLine = channel ? ` The channel is called "${channel}".` : '';
-  const ch = channel || 'this channel';
-  const prompt = `You are a professional YouTube scriptwriter.
-Write a complete, ready-to-record YouTube script for a ${style} video.${channelLine}
+// Retry fetch on 429 with exponential backoff (10s → 30s).
+async function fetchWithRetry(url, options, statusEl) {
+  const delays = [10, 30];
+  for (let attempt = 0; attempt <= delays.length; attempt++) {
+    const res = await fetch(url, options);
+    if (res.status !== 429) return res;
+    if (attempt === delays.length) return res;
+    const wait = delays[attempt];
+    for (let i = wait; i > 0; i--) {
+      if (statusEl) {
+        statusEl.innerHTML = `<div class="status-bar error">Rate limit hit — retrying in <strong>${i}s</strong>…</div>`;
+      }
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+}
 
-Topic: ${topic}
-Tone: ${tone}
-Target video length: ${length}
+async function generateWithClaude({ topic, tone, length, style, channel, apiKey, statusEl }) {
+  const channelLine = channel ? ` Channel: "${channel}".` : '';
 
-## REQUIRED STRUCTURE — follow this exactly:
+  // Scale max_tokens to video length to avoid hitting rate limits on short videos
+  const maxTokens = length.includes('18') || length.includes('25') ? 3000 : 2000;
 
-[HOOK]
-First 15 seconds. Grab attention with a bold question, surprising fact, or provocative statement directly tied to the topic. Make them need to keep watching.
+  const prompt = `You are a YouTube scriptwriter. Write a ready-to-record ${style} script.${channelLine}
+Topic: ${topic} | Tone: ${tone} | Length: ${length}
 
-[OPENING]
-Immediately after the hook — before any main content:
-• Warmly thank viewers for clicking and watching (genuine, not robotic)
-• Natural subscribe ask — tie it to the channel's value: something like "If this is the kind of content you're into, subscribe — we cover [niche] every week"
-• Like-button ask tied to a SPECIFIC, relatable situation about the topic — e.g. "Hit the like button if you've ever [specific frustrating/exciting/relatable moment tied to ${topic}]" — make it feel earned and human
+STRUCTURE (use these labels):
+[HOOK] 15-second attention grab — bold question, surprising fact, or provocative statement.
+[OPENING] Thank viewers warmly. Natural subscribe ask tied to channel value. Like ask tied to a specific relatable moment about "${topic}".
+[SECTION 1] / [SECTION 2] / [SECTION 3] (add more for longer videos) — spoken language, real examples, smooth transitions.
+[CLOSING] Must include all: (1) Recap the 3 key insights learned today — feel like payoff not a list. (2) Like ask: "smash that like button". (3) Subscribe + bell with a teased next topic. (4) Specific comment question about "${topic}" that makes people want to answer. (5) Natural sign-off.
 
-[SECTION 1] / [SECTION 2] / [SECTION 3] (add more as needed for the target length)
-• Natural spoken language — write for the ear, not the eye
-• Short punchy sentences during high-energy moments, longer ones when explaining
-• Real examples, analogies, or brief stories to ground abstract ideas
-• Smooth transitions: end each section with a bridge line into the next
+Write for the ear. Keep opening/closing human, not templated. Output only the script.`;
 
-[CLOSING]
-End with ALL of the following, woven naturally into the ${tone} tone:
-1. Recap — "So here's what we covered today:" then list the 3 most important things they learned. Make it feel like a satisfying payoff, not a bullet list. Frame each as insight, not just topic.
-2. Like ask — "If you got value from this video, smash that like button — it genuinely helps more people find this content and keeps this channel growing"
-3. Subscribe + bell — "And if you haven't already, subscribe and hit the notification bell — our next video is going to be about [tease a compelling related topic that feels like a natural next step from today's content]"
-4. Comment question — "Drop a comment below — [pose ONE specific, thought-provoking question directly tied to ${topic} that invites personal stories, opinions, or experiences. Not generic like 'what do you think?' — make it specific]"
-5. Sign-off — "See you in the next one!" or a natural sign-off that fits the ${tone} tone
-
-## STYLE NOTES
-- The opening and closing must feel human and conversational, not scripted or robotic
-- Never say "Don't forget to like and subscribe" on its own — always tie it to something specific
-- The comment question should make people actually want to answer it
-- Match the ${tone} tone throughout — adjust energy, vocabulary, and pacing accordingly
-
-Output only the script text. No meta-commentary outside of the section labels.`;
-
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
+  const res = await fetchWithRetry(
+    'https://api.anthropic.com/v1/messages',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: 'claude-opus-4-5',
+        max_tokens: maxTokens,
+        messages: [{ role: 'user', content: prompt }],
+      }),
     },
-    body: JSON.stringify({
-      model: 'claude-opus-4-5',
-      max_tokens: 4096,
-      messages: [{ role: 'user', content: prompt }],
-    }),
-  });
+    statusEl
+  );
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
+    if (res.status === 429) throw new Error('Rate limit hit — please wait 30 seconds and try again.');
     throw new Error(`Claude API error: ${err?.error?.message || res.statusText}`);
   }
 

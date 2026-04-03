@@ -59,10 +59,10 @@ async function fetchTopics(container, onTopicSelect) {
   resultsEl.innerHTML = '';
 
   try {
-    const topics = await liveSearch(niche);
+    const topics = await liveSearch(niche, statusEl);
     statusEl.innerHTML = `
       <div class="status-bar success">
-        Found ${topics.length} live trending topics for <strong>${escHtml(niche)}</strong>.
+        Showing top 20 trending topics for <strong>${escHtml(niche)}</strong>.
       </div>`;
     renderTopicCards(resultsEl, topics, niche, onTopicSelect);
   } catch (err) {
@@ -76,41 +76,68 @@ async function fetchTopics(container, onTopicSelect) {
   }
 }
 
-async function liveSearch(niche) {
+// Fetch with exponential backoff on 429 rate-limit errors.
+// waits: 10s → 30s, then throws.
+async function fetchWithRetry(url, options, statusEl) {
+  const delays = [10, 30];
+  for (let attempt = 0; attempt <= delays.length; attempt++) {
+    const res = await fetch(url, options);
+    if (res.status !== 429) return res;
+
+    if (attempt === delays.length) return res; // let caller handle final 429
+
+    const wait = delays[attempt];
+    await showCountdown(statusEl, wait);
+  }
+}
+
+async function showCountdown(statusEl, seconds) {
+  for (let i = seconds; i > 0; i--) {
+    if (statusEl) {
+      statusEl.innerHTML = `
+        <div class="status-bar error">
+          Rate limit hit — retrying in <strong>${i}s</strong>…
+        </div>`;
+    }
+    await new Promise(r => setTimeout(r, 1000));
+  }
+}
+
+async function liveSearch(niche, statusEl) {
   const { claudeApiKey } = getSettings();
   if (!claudeApiKey) {
     throw new Error('Anthropic API key missing — add it in ⚙ Settings to fetch live topics.');
   }
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': claudeApiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 4000,
-      tools: [
-        {
-          type: 'web_search_20250305',
-          name: 'web_search',
-        },
-      ],
-      system: `You are a YouTube content strategist. Search the web to find the 50 most trending, viral, or talked-about topics RIGHT NOW in the niche provided. Focus on topics with genuine audience interest, recent news hooks, or growing search volume. Return ONLY a valid JSON array — no markdown fences, no preamble, no trailing text. Each item must have exactly these fields: { "title": "...", "summary": "2-sentence description of why this is trending", "tags": ["tag1","tag2","tag3"], "hook": "One compelling opening line for a YouTube video" }`,
-      messages: [
-        {
+  const res = await fetchWithRetry(
+    'https://api.anthropic.com/v1/messages',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': claudeApiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 2000,
+        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+        system: `You are a YouTube content strategist. Use web search to find 20 trending topics this week in the given niche. Return ONLY a JSON array with no markdown or preamble. Each item: {title, summary (1 sentence), tags (3 max), hook (1 sentence)}`,
+        messages: [{
           role: 'user',
-          content: `Search the web and find the top 50 trending topics this week for a YouTube channel about: ${niche}. Search for recent news, discussions, viral content, and growing search trends. Return only the JSON array.`,
-        },
-      ],
-    }),
-  });
+          content: `Find the top 20 trending topics this week for a YouTube channel about: ${niche}. Search recent news, discussions, and viral content. Return only the JSON array.`,
+        }],
+      }),
+    },
+    statusEl
+  );
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
+    if (res.status === 429) {
+      throw new Error('Rate limit hit — please wait 30 seconds and try again.');
+    }
     throw new Error(`Claude API error (${res.status}): ${err?.error?.message || res.statusText}`);
   }
 
