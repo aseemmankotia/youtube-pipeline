@@ -116,22 +116,35 @@ async function liveSearch(niche) {
 
   const data = await res.json();
 
-  // Find the final text block — it follows any tool_use / tool_result blocks
-  const textBlock = [...(data.content || [])].reverse().find(b => b.type === 'text');
-  if (!textBlock) throw new Error('No text response from Claude. Please try again.');
+  // Debug: log all content blocks so failures are diagnosable
+  console.log('[topics] content blocks:', (data.content || []).map(b => ({
+    type: b.type,
+    textPreview: b.type === 'text' ? b.text?.slice(0, 120) : undefined,
+  })));
 
-  // Strip any accidental markdown fences before parsing
-  const raw = textBlock.text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+  // Collect all text blocks (tool_use / tool_result blocks are skipped)
+  const textBlocks = (data.content || []).filter(b => b.type === 'text');
+  if (!textBlocks.length) {
+    throw new Error('No text response from Claude. Please try again.');
+  }
 
+  // Use the last text block — Claude puts its final answer there
+  const fullText = textBlocks[textBlocks.length - 1].text || '';
+
+  // Extract the JSON array, handling fences and surrounding explanation text
   let parsed;
   try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error('Claude returned an unexpected format. Please try again.');
+    const clean = fullText.replace(/```json|```/g, '').trim();
+    const jsonMatch = clean.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) throw new Error('No JSON array found in response');
+    parsed = JSON.parse(jsonMatch[0]);
+  } catch (e) {
+    console.error('[topics] parse failed. Full text:', fullText);
+    throw new Error('Could not parse topics: ' + e.message);
   }
 
   if (!Array.isArray(parsed) || parsed.length === 0) {
-    throw new Error('No topics returned. Please try again.');
+    throw new Error('Invalid topics format returned. Please try again.');
   }
 
   // Normalise fields so the rest of the UI always gets { title, desc, trend }
