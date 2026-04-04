@@ -10,13 +10,100 @@ const TONES   = ['Engaging & Energetic', 'Educational & Calm', 'Humorous & Casua
 const LENGTHS = ['Short (3–5 min)', 'Medium (8–12 min)', 'Long (18–25 min)', 'Extended (25–30 min)'];
 const STYLES  = ['Entertainment', 'Tutorial / How-To', 'Opinion / Commentary', 'News / Explainer', 'Storytime / Narrative'];
 
-// Fix 1: max_tokens mapped to video length
 const TOKEN_MAP = {
-  'Short (3–5 min)':    2000,
-  'Medium (8–12 min)':  4000,
-  'Long (18–25 min)':   6000,
+  'Short (3–5 min)':      2000,
+  'Medium (8–12 min)':    4000,
+  'Long (18–25 min)':     6000,
   'Extended (25–30 min)': 8000,
 };
+
+const WPM         = 150;   // speaking pace for reading-time estimate
+const MAX_HISTORY = 5;
+
+// ── Word count helpers ────────────────────────────────────────────────────────
+
+function wordCount(text) {
+  return text.trim() ? text.trim().split(/\s+/).length : 0;
+}
+
+function readingTime(words) {
+  const mins = Math.round(words / WPM);
+  return mins < 1 ? '<1 min' : `~${mins} min`;
+}
+
+// ── localStorage persistence ──────────────────────────────────────────────────
+
+function persistScript(container) {
+  const wc = wordCount(container._script);
+  try {
+    localStorage.setItem('pipeline_current_script',    container._script);
+    localStorage.setItem('pipeline_current_topic',     container._topic || '');
+    localStorage.setItem('pipeline_current_wordcount', String(wc));
+  } catch {}
+}
+
+// ── Central script updater ────────────────────────────────────────────────────
+
+function setScript(container, newScript, { pushHistory = true } = {}) {
+  if (pushHistory && container._script) {
+    container._history.push(container._script);
+    if (container._history.length > MAX_HISTORY) container._history.shift();
+  }
+
+  container._script = newScript;
+  container._showingCleaned = false;
+
+  // Reset preview toggle
+  const toggleBtn = container.querySelector('#toggle-preview-btn');
+  const viewLabel = container.querySelector('#script-view-label');
+  if (toggleBtn) toggleBtn.textContent = 'Preview (cleaned)';
+  if (viewLabel) viewLabel.textContent = 'Showing raw script — click "Preview (cleaned)" to see what HeyGen will speak';
+
+  // Update text display
+  const textEl = container.querySelector('#script-text');
+  if (textEl) textEl.textContent = newScript;
+
+  // Update toolbar word count + undo
+  updateToolbar(container);
+
+  // Persist to localStorage
+  persistScript(container);
+
+  // Show the output card
+  const outCard = container.querySelector('#script-output-card');
+  if (outCard) outCard.style.display = 'block';
+}
+
+function updateToolbar(container) {
+  const wc      = wordCount(container._script);
+  const wcEl    = container.querySelector('#script-wordcount');
+  const undoBtn = container.querySelector('#undo-btn');
+  if (wcEl)    wcEl.textContent = `~${wc.toLocaleString()} words · ${readingTime(wc)} video`;
+  if (undoBtn) {
+    const count = container._history.length;
+    undoBtn.disabled   = count === 0;
+    undoBtn.textContent = count > 0 ? `← Undo (${count})` : '← Undo';
+  }
+}
+
+// ── Toast notification ────────────────────────────────────────────────────────
+
+function showToast(container, msg) {
+  // Remove any existing toast
+  container.querySelector('.script-toast')?.remove();
+  const toast = document.createElement('div');
+  toast.className = 'script-toast';
+  toast.textContent = msg;
+  container.appendChild(toast);
+  // Trigger animation
+  requestAnimationFrame(() => toast.classList.add('visible'));
+  setTimeout(() => {
+    toast.classList.remove('visible');
+    setTimeout(() => toast.remove(), 400);
+  }, 3000);
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
 
 export function renderScript(container) {
   container.innerHTML = `
@@ -63,33 +150,152 @@ export function renderScript(container) {
     </div>
 
     <div id="script-output-card" style="display:none" class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
+
+      <!-- Header -->
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
         <h2 style="margin:0;">Generated Script</h2>
         <button class="btn btn-secondary" id="toggle-preview-btn"
           style="font-size:0.8rem;padding:5px 14px;">
           Preview (cleaned)
         </button>
       </div>
+
+      <!-- Toolbar -->
+      <div id="script-toolbar"
+        style="display:flex;justify-content:space-between;align-items:center;
+               flex-wrap:wrap;gap:8px;padding:10px 14px;
+               background:var(--surface2);border:1px solid var(--border);
+               border-radius:var(--radius);margin-bottom:10px;">
+        <span id="script-wordcount"
+          style="font-size:0.82rem;color:var(--muted);white-space:nowrap;">
+          ~0 words · ~0 min video
+        </span>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+          <button class="btn btn-secondary" id="undo-btn"
+            style="font-size:0.78rem;padding:4px 10px;" disabled>← Undo</button>
+          <button class="btn btn-secondary" id="shorten-btn"
+            style="font-size:0.78rem;padding:4px 10px;">✂️ Make Shorter</button>
+          <button class="btn btn-secondary" id="longer-btn"
+            style="font-size:0.78rem;padding:4px 10px;">📝 Make Longer</button>
+          <button class="btn btn-secondary" id="regen-btn"
+            style="font-size:0.78rem;padding:4px 10px;">🔄 Regenerate</button>
+        </div>
+      </div>
+
+      <!-- View label -->
       <div id="script-view-label"
         style="font-size:0.78rem;color:var(--muted);margin-bottom:8px;">
         Showing raw script — click "Preview (cleaned)" to see what HeyGen will speak
       </div>
+
       <div class="script-output" id="script-text"></div>
+
       <div class="script-actions">
         <button class="btn btn-secondary" id="copy-script-btn">Copy Script</button>
+        <button class="btn btn-secondary" id="copy-cleaned-btn">Copy cleaned (for HeyGen)</button>
         <button class="btn btn-secondary" id="send-to-video-btn">Send to Video Tab</button>
       </div>
     </div>
   `;
 
+  // ── State ──────────────────────────────────────────────────────────────────
+  container._script       = '';
+  container._history      = [];
+  container._topic        = '';
+  container._showingCleaned = false;
+
+  // Restore persisted script from previous session
+  try {
+    const saved = localStorage.getItem('pipeline_current_script');
+    const savedTopic = localStorage.getItem('pipeline_current_topic');
+    if (saved) {
+      if (savedTopic) container.querySelector('#script-topic').value = savedTopic;
+      setScript(container, saved, { pushHistory: false });
+    }
+  } catch {}
+
+  // ── Set topic from Topics tab ──────────────────────────────────────────────
   container._setTopic = (topic) => {
-    if (topic) container.querySelector('#script-topic').value = topic.title || topic;
+    if (topic) {
+      container._topic = topic.title || topic;
+      container.querySelector('#script-topic').value = container._topic;
+    }
   };
 
+  // ── Generate ───────────────────────────────────────────────────────────────
   container.querySelector('#generate-script-btn').addEventListener('click', () => {
     generateScript(container);
   });
+
+  // ── Preview toggle ─────────────────────────────────────────────────────────
+  container.querySelector('#toggle-preview-btn').addEventListener('click', () => {
+    container._showingCleaned = !container._showingCleaned;
+    const textEl    = container.querySelector('#script-text');
+    const toggleBtn = container.querySelector('#toggle-preview-btn');
+    const viewLabel = container.querySelector('#script-view-label');
+    if (container._showingCleaned) {
+      textEl.textContent  = cleanScript(container._script);
+      toggleBtn.textContent = 'Show Raw';
+      viewLabel.textContent = 'Showing cleaned script — this is what HeyGen will speak';
+    } else {
+      textEl.textContent  = container._script;
+      toggleBtn.textContent = 'Preview (cleaned)';
+      viewLabel.textContent = 'Showing raw script — click "Preview (cleaned)" to see what HeyGen will speak';
+    }
+  });
+
+  // ── Undo ───────────────────────────────────────────────────────────────────
+  container.querySelector('#undo-btn').addEventListener('click', () => {
+    if (!container._history.length) return;
+    const prev = container._history.pop();
+    setScript(container, prev, { pushHistory: false });
+    showToast(container, '↩️ Restored previous version');
+  });
+
+  // ── Make Shorter ───────────────────────────────────────────────────────────
+  container.querySelector('#shorten-btn').addEventListener('click', () => {
+    adjustScript(container, 'shorten');
+  });
+
+  // ── Make Longer ────────────────────────────────────────────────────────────
+  container.querySelector('#longer-btn').addEventListener('click', () => {
+    adjustScript(container, 'expand');
+  });
+
+  // ── Regenerate ─────────────────────────────────────────────────────────────
+  container.querySelector('#regen-btn').addEventListener('click', () => {
+    generateScript(container);
+  });
+
+  // ── Copy Script ────────────────────────────────────────────────────────────
+  container.querySelector('#copy-script-btn').addEventListener('click', () => {
+    navigator.clipboard.writeText(container._script).then(() => {
+      const b = container.querySelector('#copy-script-btn');
+      b.textContent = 'Copied!';
+      setTimeout(() => { b.textContent = 'Copy Script'; }, 1500);
+    });
+  });
+
+  // ── Copy Cleaned ───────────────────────────────────────────────────────────
+  container.querySelector('#copy-cleaned-btn').addEventListener('click', () => {
+    const cleaned = cleanScript(container._script);
+    navigator.clipboard.writeText(cleaned).then(() => {
+      const b = container.querySelector('#copy-cleaned-btn');
+      b.textContent = 'Copied!';
+      setTimeout(() => { b.textContent = 'Copy cleaned (for HeyGen)'; }, 1500);
+    });
+  });
+
+  // ── Send to Video Tab ──────────────────────────────────────────────────────
+  container.querySelector('#send-to-video-btn').addEventListener('click', () => {
+    const topic = container.querySelector('#script-topic').value.trim();
+    document.dispatchEvent(new CustomEvent('send-to-video', {
+      detail: { script: container._script, topic },
+    }));
+  });
 }
+
+// ── Generate script (full generation) ────────────────────────────────────────
 
 async function generateScript(container) {
   const topic   = container.querySelector('#script-topic').value.trim();
@@ -100,8 +306,6 @@ async function generateScript(container) {
   const { claudeApiKey: apiKey } = getSettings();
 
   const statusEl = container.querySelector('#script-status');
-  const outCard  = container.querySelector('#script-output-card');
-  const textEl   = container.querySelector('#script-text');
   const btn      = container.querySelector('#generate-script-btn');
 
   if (!topic) {
@@ -109,26 +313,19 @@ async function generateScript(container) {
     return;
   }
 
+  container._topic = topic;
+  setToolbarBusy(container, true);
   btn.disabled = true;
   btn.innerHTML = '<span class="loader"></span><span>Generating…</span>';
   statusEl.innerHTML = '';
-  outCard.style.display = 'none';
 
-  // Fix 5: progress indicator on a timer
-  const progressMessages = [
-    '✍️ Writing intro and hook…',
-    '✍️ Developing main sections…',
-    '✍️ Writing conclusion and CTA…',
-  ];
-  let progressStep = 0;
+  // Progress messages on timer
   function showProgress(msg) {
     statusEl.innerHTML = `<div class="status-bar info">${msg}</div>`;
   }
-  showProgress(progressMessages[0]);
-  const progressTimers = [
-    setTimeout(() => showProgress(progressMessages[1]), 3000),
-    setTimeout(() => showProgress(progressMessages[2]), 6000),
-  ];
+  showProgress('✍️ Writing intro and hook…');
+  const t1 = setTimeout(() => showProgress('✍️ Developing main sections…'), 3000);
+  const t2 = setTimeout(() => showProgress('✍️ Writing conclusion and CTA…'), 6000);
 
   try {
     let script;
@@ -136,63 +333,222 @@ async function generateScript(container) {
       script = await generateWithClaude({ topic, tone, length, style, channel, apiKey, statusEl });
     } else {
       script = generateTemplate({ topic, tone, length, style, channel });
-      clearTimeout(progressTimers[0]);
-      clearTimeout(progressTimers[1]);
-      statusEl.innerHTML = `
-        <div class="status-bar info">
-          Template mode — add a Claude API key in <strong>⚙ Settings</strong> for AI-generated scripts.
-        </div>`;
+      clearTimeout(t1); clearTimeout(t2);
+      statusEl.innerHTML = `<div class="status-bar info">Template mode — add a Claude API key in <strong>⚙ Settings</strong> for AI-generated scripts.</div>`;
     }
 
-    clearTimeout(progressTimers[0]);
-    clearTimeout(progressTimers[1]);
+    clearTimeout(t1); clearTimeout(t2);
     showProgress('✅ Script complete!');
     setTimeout(() => { statusEl.innerHTML = ''; }, 2000);
 
-    textEl.textContent = script;
-    outCard.style.display = 'block';
-
-    // Preview toggle — raw vs cleaned
-    let showingCleaned = false;
-    const toggleBtn  = container.querySelector('#toggle-preview-btn');
-    const viewLabel  = container.querySelector('#script-view-label');
-    toggleBtn.onclick = () => {
-      showingCleaned = !showingCleaned;
-      if (showingCleaned) {
-        textEl.textContent = cleanScript(script);
-        toggleBtn.textContent = 'Show Raw';
-        viewLabel.textContent = 'Showing cleaned script — this is what HeyGen will speak';
-      } else {
-        textEl.textContent = script;
-        toggleBtn.textContent = 'Preview (cleaned)';
-        viewLabel.textContent = 'Showing raw script — click "Preview (cleaned)" to see what HeyGen will speak';
-      }
-    };
-
-    container.querySelector('#copy-script-btn').onclick = () => {
-      navigator.clipboard.writeText(script).then(() => {
-        const b = container.querySelector('#copy-script-btn');
-        b.textContent = 'Copied!';
-        setTimeout(() => b.textContent = 'Copy Script', 1500);
-      });
-    };
-
-    container.querySelector('#send-to-video-btn').onclick = () => {
-      const topic = container.querySelector('#script-topic').value.trim();
-      document.dispatchEvent(new CustomEvent('send-to-video', { detail: { script, topic } }));
-    };
-
+    const prevWC = wordCount(container._script);
+    setScript(container, script);
+    const newWC = wordCount(script);
+    if (prevWC > 0) {
+      const diff = newWC - prevWC;
+      showToast(container, diff >= 0
+        ? `🔄 Regenerated · +${diff.toLocaleString()} words`
+        : `🔄 Regenerated · ${diff.toLocaleString()} words`);
+    }
   } catch (err) {
-    clearTimeout(progressTimers[0]);
-    clearTimeout(progressTimers[1]);
+    clearTimeout(t1); clearTimeout(t2);
     statusEl.innerHTML = `<div class="status-bar error">${escHtml(err.message)}</div>`;
   } finally {
     btn.disabled = false;
     btn.innerHTML = '<span>Generate Script</span>';
+    setToolbarBusy(container, false);
   }
 }
 
-// Retry fetch on 429 with exponential backoff (10s → 30s).
+// ── Adjust script (shorten / expand) ─────────────────────────────────────────
+
+async function adjustScript(container, mode) {
+  if (!container._script) return;
+  const { claudeApiKey: apiKey } = getSettings();
+  if (!apiKey) {
+    showToast(container, '⚠️ Add a Claude API key in Settings first');
+    return;
+  }
+
+  const statusEl   = container.querySelector('#script-status');
+  const isShorten  = mode === 'shorten';
+  const loadingMsg = isShorten ? '✂️ Shortening script…' : '📝 Expanding script…';
+
+  setToolbarBusy(container, true);
+  statusEl.innerHTML = `<div class="status-bar info">${loadingMsg}</div>`;
+
+  const systemPrompt = isShorten
+    ? `You are a video script editor. Shorten the provided script by 30% while keeping:
+- The opening hook intact
+- All main section headings
+- The closing CTA and subscribe/like request
+- The most important points in each section
+
+Remove:
+- Repetitive explanations
+- Excessive examples (keep best one per section)
+- Overly long transitions
+- Padding and filler phrases
+
+Return ONLY the shortened script, no commentary.`
+    : `You are a video script editor. Expand the provided script by 30% while:
+- Adding more depth and examples to each main section
+- Including relevant statistics or data points
+- Adding smoother transitions between sections
+- Expanding the introduction to build more context
+- Adding a 'common mistakes' or 'pro tips' subsection
+- Keeping the same tone and style throughout
+- Keeping the opening hook and closing CTA intact
+
+Return ONLY the expanded script, no commentary.`;
+
+  const userMsg = isShorten
+    ? `Shorten this script:\n\n${container._script}`
+    : `Expand this script:\n\n${container._script}`;
+
+  try {
+    const res = await fetchWithRetry(
+      'https://api.anthropic.com/v1/messages',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model: 'claude-opus-4-5',
+          max_tokens: isShorten ? 4000 : 8000,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userMsg }],
+        }),
+      },
+      statusEl
+    );
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      if (res.status === 429) throw new Error('Rate limit hit — please wait 30 seconds and try again.');
+      throw new Error(`Claude API error: ${err?.error?.message || res.statusText}`);
+    }
+
+    const data      = await res.json();
+    const newScript = data.content?.[0]?.text || '';
+    if (!newScript) throw new Error('Empty response from Claude.');
+
+    const prevWC = wordCount(container._script);
+    setScript(container, newScript);
+    const newWC  = wordCount(newScript);
+    const diff   = newWC - prevWC;
+    const sign   = diff >= 0 ? '+' : '';
+    const label  = isShorten ? '✂️ Script shortened' : '📝 Script expanded';
+    showToast(container, `${label} · ${sign}${diff.toLocaleString()} words`);
+    statusEl.innerHTML = '';
+
+  } catch (err) {
+    statusEl.innerHTML = `<div class="status-bar error">${escHtml(err.message)}</div>`;
+  } finally {
+    setToolbarBusy(container, false);
+  }
+}
+
+// Disable/enable all toolbar buttons during async operations
+function setToolbarBusy(container, busy) {
+  ['shorten-btn', 'longer-btn', 'regen-btn', 'undo-btn'].forEach(id => {
+    const el = container.querySelector(`#${id}`);
+    if (!el) return;
+    if (busy) {
+      el.disabled = true;
+    } else {
+      // undo only re-enables if history exists
+      if (id === 'undo-btn') {
+        el.disabled = container._history.length === 0;
+      } else {
+        el.disabled = false;
+      }
+    }
+  });
+}
+
+// ── Claude full-script generation with continuation ───────────────────────────
+
+async function generateWithClaude({ topic, tone, length, style, channel, apiKey, statusEl }) {
+  const channelLine = channel ? ` Channel: "${channel}".` : '';
+  const maxTokens   = TOKEN_MAP[length] ?? 4000;
+
+  const prompt = `You are a YouTube scriptwriter. Write a ready-to-record ${style} script.${channelLine}
+Topic: ${topic} | Tone: ${tone} | Length: ${length}
+
+IMPORTANT: Always complete the full script including the closing CTA and sign-off. Never end mid-sentence or mid-section. If running long, condense earlier sections rather than cutting off the ending.
+
+STRUCTURE (use these labels):
+[HOOK] 15-second attention grab — bold question, surprising fact, or provocative statement.
+[OPENING] Thank viewers warmly. Natural subscribe ask tied to channel value. Like ask tied to a specific relatable moment about "${topic}".
+[SECTION 1] / [SECTION 2] / [SECTION 3] (add more for longer videos) — spoken language, real examples, smooth transitions.
+[CLOSING] Must include all: (1) Recap the 3 key insights learned today — feel like payoff not a list. (2) Like ask: "smash that like button". (3) Subscribe + bell with a teased next topic. (4) Specific comment question about "${topic}" that makes people want to answer. (5) Natural sign-off.
+
+Write for the ear. Keep opening/closing human, not templated. Output only the script.`;
+
+  let fullScript = '';
+  let messages   = [{ role: 'user', content: prompt }];
+  const MAX_CONTINUATIONS = 2;
+
+  for (let pass = 0; pass <= MAX_CONTINUATIONS; pass++) {
+    const res = await fetchWithRetry(
+      'https://api.anthropic.com/v1/messages',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({ model: 'claude-opus-4-5', max_tokens: maxTokens, messages }),
+      },
+      pass === 0 ? statusEl : null
+    );
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      if (res.status === 429) throw new Error('Rate limit hit — please wait 30 seconds and try again.');
+      throw new Error(`Claude API error: ${err?.error?.message || res.statusText}`);
+    }
+
+    const data       = await res.json();
+    const chunk      = data.content?.[0]?.text || '';
+    const stopReason = data.stop_reason;
+
+    fullScript += (pass === 0 ? chunk : chunk.trimStart());
+
+    if (stopReason !== 'max_tokens') break;
+
+    if (pass === MAX_CONTINUATIONS) {
+      console.warn('[script] Script truncated after max continuations');
+      if (statusEl) {
+        statusEl.innerHTML = `<div class="status-bar error">⚠️ Script was cut off due to length limits. Try selecting a shorter video length.</div>`;
+        setTimeout(() => { statusEl.innerHTML = ''; }, 6000);
+      }
+      break;
+    }
+
+    console.log(`[script] Truncated at pass ${pass} — requesting continuation…`);
+    if (statusEl) {
+      statusEl.innerHTML = `<div class="status-bar info">✍️ Script is long — fetching continuation (${pass + 1}/${MAX_CONTINUATIONS})…</div>`;
+    }
+    messages = [
+      { role: 'user',      content: prompt },
+      { role: 'assistant', content: fullScript },
+      { role: 'user',      content: 'Please continue the script from where you left off. Do not repeat anything already written. Continue seamlessly.' },
+    ];
+  }
+
+  return fullScript;
+}
+
+// ── Retry fetch on 429 ────────────────────────────────────────────────────────
+
 async function fetchWithRetry(url, options, statusEl) {
   const delays = [10, 30];
   for (let attempt = 0; attempt <= delays.length; attempt++) {
@@ -209,99 +565,10 @@ async function fetchWithRetry(url, options, statusEl) {
   }
 }
 
-async function generateWithClaude({ topic, tone, length, style, channel, apiKey, statusEl }) {
-  const channelLine = channel ? ` Channel: "${channel}".` : '';
-
-  // Fix 1: look up token budget by video length selection; default 4000
-  const maxTokens = TOKEN_MAP[length] ?? 4000;
-
-  // Fix 4: instruct Claude to always finish the script
-  const prompt = `You are a YouTube scriptwriter. Write a ready-to-record ${style} script.${channelLine}
-Topic: ${topic} | Tone: ${tone} | Length: ${length}
-
-IMPORTANT: Always complete the full script including the closing CTA and sign-off. Never end mid-sentence or mid-section. If running long, condense earlier sections rather than cutting off the ending.
-
-STRUCTURE (use these labels):
-[HOOK] 15-second attention grab — bold question, surprising fact, or provocative statement.
-[OPENING] Thank viewers warmly. Natural subscribe ask tied to channel value. Like ask tied to a specific relatable moment about "${topic}".
-[SECTION 1] / [SECTION 2] / [SECTION 3] (add more for longer videos) — spoken language, real examples, smooth transitions.
-[CLOSING] Must include all: (1) Recap the 3 key insights learned today — feel like payoff not a list. (2) Like ask: "smash that like button". (3) Subscribe + bell with a teased next topic. (4) Specific comment question about "${topic}" that makes people want to answer. (5) Natural sign-off.
-
-Write for the ear. Keep opening/closing human, not templated. Output only the script.`;
-
-  // Fix 3: continuation loop — up to 2 extra passes if truncated
-  let fullScript = '';
-  let messages   = [{ role: 'user', content: prompt }];
-  const MAX_CONTINUATIONS = 2;
-
-  for (let pass = 0; pass <= MAX_CONTINUATIONS; pass++) {
-    const res = await fetchWithRetry(
-      'https://api.anthropic.com/v1/messages',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true',
-        },
-        body: JSON.stringify({
-          model: 'claude-opus-4-5',
-          max_tokens: maxTokens,
-          messages,
-        }),
-      },
-      pass === 0 ? statusEl : null  // show status on first call only
-    );
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      if (res.status === 429) throw new Error('Rate limit hit — please wait 30 seconds and try again.');
-      throw new Error(`Claude API error: ${err?.error?.message || res.statusText}`);
-    }
-
-    const data       = await res.json();
-    const chunk      = data.content?.[0]?.text || '';
-    const stopReason = data.stop_reason;
-
-    fullScript += (pass === 0 ? chunk : chunk.trimStart());
-
-    // Fix 2: if response completed normally, we're done
-    if (stopReason !== 'max_tokens') break;
-
-    // Truncated — try to continue unless we've hit the limit
-    if (pass === MAX_CONTINUATIONS) {
-      console.warn('[script] Script truncated after max continuations');
-      // Show warning banner
-      if (statusEl) {
-        statusEl.innerHTML = `
-          <div class="status-bar error">
-            ⚠️ Script was cut off due to length limits. Try selecting a shorter video length.
-          </div>`;
-        setTimeout(() => { statusEl.innerHTML = ''; }, 6000);
-      }
-      break;
-    }
-
-    // Build continuation messages: original prompt → partial response → continue request
-    console.log(`[script] Truncated at pass ${pass} — requesting continuation…`);
-    if (statusEl) {
-      statusEl.innerHTML = `<div class="status-bar info">✍️ Script is long — fetching continuation (${pass + 1}/${MAX_CONTINUATIONS})…</div>`;
-    }
-    messages = [
-      { role: 'user',      content: prompt },
-      { role: 'assistant', content: fullScript },
-      { role: 'user',      content: 'Please continue the script from where you left off. Do not repeat anything already written. Continue seamlessly.' },
-    ];
-  }
-
-  return fullScript;
-}
+// ── Template fallback ─────────────────────────────────────────────────────────
 
 function generateTemplate({ topic, tone, length, style, channel }) {
   const ch = channel || 'this channel';
-  const mins = length.match(/\d+/g);
-  const minStr = mins ? `${mins[0]}–${mins[1]} minutes` : 'a few minutes';
 
   return `[HOOK]
 Hey — before you scroll past, let me ask you something. Have you ever wondered about ${topic}? Because today, we're going deep on exactly that, and what I found might completely change how you think about it.
