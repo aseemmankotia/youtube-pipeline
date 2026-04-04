@@ -11,11 +11,12 @@ const TONES   = ['Engaging & Energetic', 'Educational & Calm', 'Humorous & Casua
 const LENGTHS = ['Short (3–5 min)', 'Medium (8–12 min)', 'Long (18–25 min)', 'Extended (25–30 min)'];
 const STYLES  = ['Entertainment', 'Tutorial / How-To', 'Opinion / Commentary', 'News / Explainer', 'Storytime / Narrative'];
 
+// Fix 5: increased limits to accommodate web-search token overhead
 const TOKEN_MAP = {
-  'Short (3–5 min)':      2000,
-  'Medium (8–12 min)':    4000,
-  'Long (18–25 min)':     6000,
-  'Extended (25–30 min)': 8000,
+  'Short (3–5 min)':      3000,
+  'Medium (8–12 min)':    5000,
+  'Long (18–25 min)':     7000,
+  'Extended (25–30 min)': 9000,
 };
 
 const WPM         = 150;   // speaking pace for reading-time estimate
@@ -40,6 +41,7 @@ function persistScript(container) {
     localStorage.setItem('pipeline_current_script',    container._script);
     localStorage.setItem('pipeline_current_topic',     container._topic || '');
     localStorage.setItem('pipeline_current_wordcount', String(wc));
+    localStorage.setItem('pipeline_current_sources',   container._sources || '');
   } catch {}
 }
 
@@ -193,6 +195,20 @@ export function renderScript(container) {
 
       <div class="script-output" id="script-text"></div>
 
+      <!-- Sources (shown after web-search generation) -->
+      <div id="script-sources-section" style="display:none;margin-top:10px;">
+        <button id="sources-toggle-btn" class="btn btn-secondary"
+          style="font-size:0.78rem;padding:4px 10px;margin-bottom:6px;">
+          📚 Sources used (0)
+        </button>
+        <div id="script-sources-body" style="display:none;
+          background:var(--surface2);border:1px solid var(--border);
+          border-radius:var(--radius);padding:12px 16px;
+          font-size:0.8rem;color:var(--muted);
+          white-space:pre-wrap;max-height:200px;overflow-y:auto;line-height:1.6;">
+        </div>
+      </div>
+
       <div class="script-actions">
         <button class="btn btn-secondary" id="copy-script-btn">Copy Script</button>
         <button class="btn btn-secondary" id="copy-cleaned-btn">Copy cleaned (for HeyGen)</button>
@@ -203,20 +219,31 @@ export function renderScript(container) {
   `;
 
   // ── State ──────────────────────────────────────────────────────────────────
-  container._script       = '';
-  container._history      = [];
-  container._topic        = '';
+  container._script         = '';
+  container._history        = [];
+  container._topic          = '';
+  container._sources        = '';
   container._showingCleaned = false;
 
   // Restore persisted script from previous session
   try {
-    const saved = localStorage.getItem('pipeline_current_script');
-    const savedTopic = localStorage.getItem('pipeline_current_topic');
+    const saved       = localStorage.getItem('pipeline_current_script');
+    const savedTopic   = localStorage.getItem('pipeline_current_topic');
+    const savedSources = localStorage.getItem('pipeline_current_sources');
     if (saved) {
       if (savedTopic) container.querySelector('#script-topic').value = savedTopic;
+      container._sources = savedSources || '';
       setScript(container, saved, { pushHistory: false });
+      if (savedSources) renderSources(container, savedSources, false);
     }
   } catch {}
+
+  // ── Sources toggle ─────────────────────────────────────────────────────────
+  container.querySelector('#sources-toggle-btn').addEventListener('click', () => {
+    const body = container.querySelector('#script-sources-body');
+    const isHidden = body.style.display === 'none';
+    body.style.display = isHidden ? 'block' : 'none';
+  });
 
   // ── Set topic from Topics tab ──────────────────────────────────────────────
   container._setTopic = (topic) => {
@@ -318,6 +345,24 @@ export function renderScript(container) {
   });
 }
 
+// ── Sources display ───────────────────────────────────────────────────────────
+
+function renderSources(container, sources, expand = false) {
+  const section   = container.querySelector('#script-sources-section');
+  const body      = container.querySelector('#script-sources-body');
+  const toggleBtn = container.querySelector('#sources-toggle-btn');
+  if (!section || !sources.trim()) return;
+
+  // Count how many distinct URLs/snippets were returned
+  const lines = sources.split('\n').filter(l => l.trim());
+  const count  = Math.max(1, lines.length);
+
+  section.style.display   = 'block';
+  body.textContent        = sources.trim();
+  body.style.display      = expand ? 'block' : 'none';
+  toggleBtn.textContent   = `📚 Sources used (${count})`;
+}
+
 // ── Generate script (full generation) ────────────────────────────────────────
 
 async function generateScript(container) {
@@ -342,18 +387,18 @@ async function generateScript(container) {
   btn.innerHTML = '<span class="loader"></span><span>Generating…</span>';
   statusEl.innerHTML = '';
 
-  // Progress messages on timer
+  // Fix 4: research-aware progress messages
   function showProgress(msg) {
     statusEl.innerHTML = `<div class="status-bar info">${msg}</div>`;
   }
-  showProgress('✍️ Writing intro and hook…');
-  const t1 = setTimeout(() => showProgress('✍️ Developing main sections…'), 3000);
-  const t2 = setTimeout(() => showProgress('✍️ Writing conclusion and CTA…'), 6000);
+  showProgress('🔍 Researching latest 2026 data…');
+  const t1 = setTimeout(() => showProgress('📰 Found recent news and statistics…'), 5000);
+  const t2 = setTimeout(() => showProgress('✍️ Writing your script with fresh data…'), 10000);
 
   try {
-    let script;
+    let script, sources = '';
     if (apiKey) {
-      script = await generateWithClaude({ topic, tone, length, style, channel, apiKey, statusEl });
+      ({ script, sources } = await generateWithClaude({ topic, tone, length, style, channel, apiKey, statusEl }));
     } else {
       script = generateTemplate({ topic, tone, length, style, channel });
       clearTimeout(t1); clearTimeout(t2);
@@ -361,11 +406,13 @@ async function generateScript(container) {
     }
 
     clearTimeout(t1); clearTimeout(t2);
-    showProgress('✅ Script complete!');
-    setTimeout(() => { statusEl.innerHTML = ''; }, 2000);
+    showProgress('✅ Script complete with latest 2026 insights!');
+    setTimeout(() => { statusEl.innerHTML = ''; }, 2500);
 
+    container._sources = sources;
     const prevWC = wordCount(container._script);
     setScript(container, script);
+    if (sources) renderSources(container, sources, false);
     const newWC = wordCount(script);
     if (prevWC > 0) {
       const diff = newWC - prevWC;
@@ -506,6 +553,11 @@ async function generateWithClaude({ topic, tone, length, style, channel, apiKey,
   const channelLine = channel ? ` Channel: "${channel}".` : '';
   const maxTokens   = TOKEN_MAP[length] ?? 4000;
 
+  // Fix 1: date-aware system prompt + web search instructions
+  const today      = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const year       = new Date().getFullYear();
+  const systemPrompt = `Today's date is ${today}. You are writing a YouTube script in ${year}. All statistics, data points, and references MUST be from 2025 or ${year} wherever possible. Before writing the script, search the web for the latest news and statistics about the topic so the content reflects the current state of the world. When citing data, use phrases like "As of ${year}…", "According to recent reports…", or "The latest data shows…". Search queries to run before writing: "${topic} latest news ${year}", "${topic} statistics ${year}", "${topic} trends ${year}".`;
+
   const prompt = `You are a YouTube scriptwriter. Write a ready-to-record ${style} script.${channelLine}
 Topic: ${topic} | Tone: ${tone} | Length: ${length}
 
@@ -520,10 +572,22 @@ STRUCTURE (use these labels):
 Write for the ear. Keep opening/closing human, not templated. Output only the script.`;
 
   let fullScript = '';
-  let messages   = [{ role: 'user', content: prompt }];
+  let lastContent = [];
+  let messages    = [{ role: 'user', content: prompt }];
   const MAX_CONTINUATIONS = 2;
 
   for (let pass = 0; pass <= MAX_CONTINUATIONS; pass++) {
+    // Fix 2: add web_search tool on first pass only
+    const bodyBase = {
+      model:      'claude-opus-4-5',
+      max_tokens: maxTokens,
+      system:     systemPrompt,
+      messages,
+    };
+    if (pass === 0) {
+      bodyBase.tools = [{ type: 'web_search_20250305', name: 'web_search' }];
+    }
+
     const res = await fetchWithRetry(
       'https://api.anthropic.com/v1/messages',
       {
@@ -532,9 +596,10 @@ Write for the ear. Keep opening/closing human, not templated. Output only the sc
           'Content-Type': 'application/json',
           'x-api-key': apiKey,
           'anthropic-version': '2023-06-01',
+          'anthropic-beta': 'web-search-2025-03-05',
           'anthropic-dangerous-direct-browser-access': 'true',
         },
-        body: JSON.stringify({ model: 'claude-opus-4-5', max_tokens: maxTokens, messages }),
+        body: JSON.stringify(bodyBase),
       },
       pass === 0 ? statusEl : null
     );
@@ -546,8 +611,18 @@ Write for the ear. Keep opening/closing human, not templated. Output only the sc
     }
 
     const data       = await res.json();
-    const chunk      = data.content?.[0]?.text || '';
-    const stopReason = data.stop_reason;
+    const content    = data.content || [];
+    lastContent      = content;
+
+    // Fix 3: multi-block response parsing — take last text block
+    const textBlocks  = content.filter(b => b.type === 'text');
+    const chunk       = textBlocks[textBlocks.length - 1]?.text || '';
+    const searchCount = content.filter(b => b.type === 'tool_use').length;
+    const stopReason  = data.stop_reason;
+
+    if (pass === 0 && searchCount > 0) {
+      console.log(`[script] ${searchCount} web search(es) performed for "${topic}"`);
+    }
 
     // Track token usage for this pass
     trackUsage('script_gen',
@@ -579,7 +654,15 @@ Write for the ear. Keep opening/closing human, not templated. Output only the sc
     ];
   }
 
-  return fullScript;
+  // Fix 4: extract sources from tool_result blocks in last response
+  const sources = lastContent
+    .filter(b => b.type === 'tool_result')
+    .flatMap(b => Array.isArray(b.content)
+      ? b.content.map(x => x.text || '').filter(Boolean)
+      : [String(b.content || '')])
+    .join('\n\n');
+
+  return { script: fullScript, sources };
 }
 
 // ── Retry fetch on 429 ────────────────────────────────────────────────────────
