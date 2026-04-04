@@ -54,11 +54,13 @@ function setScript(container, newScript, { pushHistory = true } = {}) {
   container._script = newScript;
   container._showingCleaned = false;
 
-  // Reset preview toggle
-  const toggleBtn = container.querySelector('#toggle-preview-btn');
-  const viewLabel = container.querySelector('#script-view-label');
-  if (toggleBtn) toggleBtn.textContent = 'Preview (cleaned)';
-  if (viewLabel) viewLabel.textContent = 'Showing raw script — click "Preview (cleaned)" to see what HeyGen will speak';
+  // Reset preview toggle state
+  const toggleBtn       = container.querySelector('#toggle-preview-btn');
+  const actionToggleBtn = container.querySelector('#preview-cleaned-btn');
+  const viewLabel       = container.querySelector('#script-view-label');
+  if (toggleBtn)       { toggleBtn.textContent = 'Preview (cleaned)'; }
+  if (actionToggleBtn) { actionToggleBtn.textContent = '👁 Preview cleaned'; actionToggleBtn.style.borderColor = ''; actionToggleBtn.style.color = ''; }
+  if (viewLabel)       { viewLabel.textContent = 'Showing raw script — click "Preview (cleaned)" to see what HeyGen will speak'; viewLabel.style.color = ''; }
 
   // Update text display
   const textEl = container.querySelector('#script-text');
@@ -194,6 +196,7 @@ export function renderScript(container) {
       <div class="script-actions">
         <button class="btn btn-secondary" id="copy-script-btn">Copy Script</button>
         <button class="btn btn-secondary" id="copy-cleaned-btn">Copy cleaned (for HeyGen)</button>
+        <button class="btn btn-secondary" id="preview-cleaned-btn">👁 Preview cleaned</button>
         <button class="btn btn-secondary" id="send-to-video-btn">Send to Video Tab</button>
       </div>
     </div>
@@ -228,21 +231,40 @@ export function renderScript(container) {
     generateScript(container);
   });
 
-  // ── Preview toggle ─────────────────────────────────────────────────────────
+  // ── Preview toggle (shared between header btn and action btn) ────────────────
+  function applyPreviewToggle() {
+    const textEl          = container.querySelector('#script-text');
+    const headerToggleBtn = container.querySelector('#toggle-preview-btn');
+    const actionToggleBtn = container.querySelector('#preview-cleaned-btn');
+    const viewLabel       = container.querySelector('#script-view-label');
+
+    if (container._showingCleaned) {
+      textEl.textContent        = cleanScript(container._script);
+      headerToggleBtn.textContent = 'Show Raw';
+      actionToggleBtn.textContent = '👁 Show original';
+      actionToggleBtn.style.borderColor = 'var(--accent)';
+      actionToggleBtn.style.color       = 'var(--accent)';
+      viewLabel.textContent     = 'Showing cleaned version — this is exactly what HeyGen will speak';
+      viewLabel.style.color     = '#7af57a';
+    } else {
+      textEl.textContent        = container._script;
+      headerToggleBtn.textContent = 'Preview (cleaned)';
+      actionToggleBtn.textContent = '👁 Preview cleaned';
+      actionToggleBtn.style.borderColor = '';
+      actionToggleBtn.style.color       = '';
+      viewLabel.textContent     = 'Showing raw script — click "Preview (cleaned)" to see what HeyGen will speak';
+      viewLabel.style.color     = '';
+    }
+  }
+
   container.querySelector('#toggle-preview-btn').addEventListener('click', () => {
     container._showingCleaned = !container._showingCleaned;
-    const textEl    = container.querySelector('#script-text');
-    const toggleBtn = container.querySelector('#toggle-preview-btn');
-    const viewLabel = container.querySelector('#script-view-label');
-    if (container._showingCleaned) {
-      textEl.textContent  = cleanScript(container._script);
-      toggleBtn.textContent = 'Show Raw';
-      viewLabel.textContent = 'Showing cleaned script — this is what HeyGen will speak';
-    } else {
-      textEl.textContent  = container._script;
-      toggleBtn.textContent = 'Preview (cleaned)';
-      viewLabel.textContent = 'Showing raw script — click "Preview (cleaned)" to see what HeyGen will speak';
-    }
+    applyPreviewToggle();
+  });
+
+  container.querySelector('#preview-cleaned-btn').addEventListener('click', () => {
+    container._showingCleaned = !container._showingCleaned;
+    applyPreviewToggle();
   });
 
   // ── Undo ───────────────────────────────────────────────────────────────────

@@ -1,136 +1,160 @@
 /**
- * cleanScript — strips markdown / code / technical noise from a YouTube script
- * so it reads as pure spoken text (no symbols HeyGen would speak aloud).
+ * cleanScript — strips ALL markdown / stage-direction / code / technical noise
+ * from a YouTube script so it reads as pure spoken text for HeyGen.
  *
  * Used in:
  *   components/heygen.js  — before sending to HeyGen API
- *   components/script.js  — "Preview (cleaned)" toggle
+ *   components/script.js  — "Preview cleaned" toggle
  *
  * NOT used by render.js slide-splitter — that has its own minimal copy so
  * the Anthropic API still sees raw code for code-type slides.
  */
 
-// Phrases cycled through when replacing code blocks so it doesn't sound repetitive
+// Code-block replacement phrases — no brackets so they survive bracket-stripping
 const CODE_PHRASES = [
-  '[Here you can see the code example on screen]',
-  '[As shown in the code on screen]',
-  '[Take a look at this implementation on screen]',
-  "[Here's what the code looks like]",
-  '[Check out this code example]',
+  'Here you can see the code example on screen.',
+  'As shown in the code on screen.',
+  'Take a look at this implementation on screen.',
+  "Here's what the code looks like.",
+  'Check out this code example on screen.',
 ];
 let _phraseIdx = 0;
 function nextCodePhrase() {
   return CODE_PHRASES[_phraseIdx++ % CODE_PHRASES.length];
 }
 
+// Delivery/tone words that flag a parenthetical as a stage direction
+const DELIVERY_WORDS = [
+  'pause','beat','smile','laugh','chuckle','energetic','serious',
+  'slow','fast','loud','soft','whisper','shout','emphasize',
+  'dramatic','excited','calm','urgent','delivery','tone','voice',
+  'speaking','cut','fade','b-roll','broll','music','sfx','sound',
+  'visual','graphic','animation','demo','screen','camera',
+];
+const DELIVERY_RE = new RegExp(
+  `\\([^)]*(?:${DELIVERY_WORDS.join('|')})[^)]*\\)`, 'gi'
+);
+
 export function cleanScript(raw) {
   if (!raw) return '';
-
-  // Reset phrase rotation on each call so output is deterministic per call
   _phraseIdx = 0;
-
-  // ── Pass 1: multi-line substitutions (operate on full string) ─────────────
 
   let text = raw;
 
-  // Fenced code blocks: ```lang ... ``` (possibly spanning many lines)
+  // ── Phase 1: Replace code blocks with spoken text (before bracket-stripping) ─
+
+  // Fenced code blocks: ```lang ... ```
   text = text.replace(/```[\s\S]*?```/gm, () => nextCodePhrase());
 
-  // JSON / YAML blocks: lines where ≥3 consecutive lines look like key:value
-  // or pure bracket/brace structure — replace group with config phrase
-  text = text.replace(
-    /((?:^[ \t]*(?:[{}\[\]]|"[\w-]+"\s*:|[\w-]+:\s+\S).*\n){3,})/gm,
-    '[configuration shown on screen]\n'
-  );
+  // Indented code blocks (4-space indent) — line-level, handled in phase 3
 
-  // ── Pass 2: line-by-line processing ───────────────────────────────────────
+  // ── Phase 2: String-level removal ────────────────────────────────────────────
 
-  const lines = text.split('\n').map(line => {
-    // Preserve the original for indented-code detection before trimming
-    const raw = line;
+  // Remove ALL square-bracket content: [HOOK], [SECTION 1], [B-ROLL], etc.
+  text = text.replace(/\[[^\]]*\]/g, '');
+
+  // Remove curly-brace directions: {like this}
+  text = text.replace(/\{[^}]*\}/g, '');
+
+  // Remove *(...) stage directions: *(pause)*, *(cut to B-roll)*
+  text = text.replace(/\*\([^)]*\)\*/g, '');
+
+  // Remove markdown headings (must come before bold stripping)
+  text = text.replace(/^#{1,6}[^\n]*/gm, '');
+
+  // Remove divider lines: ---, ===, ***
+  text = text.replace(/^[-=*]{3,}\s*$/gm, '');
+
+  // Remove metadata header lines
+  text = text.replace(/^.*youtube\s+script.*$/gim, '');
+  text = text.replace(/^.*video\s+length[:\s].*$/gim, '');
+  text = text.replace(/^.*target\s+audience[:\s].*$/gim, '');
+  text = text.replace(/^.*\btone\s*:.*$/gim, '');
+  text = text.replace(/^.*\bstyle\s*:.*$/gim, '');
+
+  // ── Phase 3: Line-by-line processing ─────────────────────────────────────────
+
+  const processedLines = text.split('\n').map(line => {
+    const original = line;
     let l = line.trim();
 
-    // ── Drop entire line ────────────────────────────────────────────────────
+    // Drop lines that are now empty or whitespace-only after phase 2 removals
+    if (!l) return '';
 
-    // Markdown headings
-    if (/^#{1,6}(\s|$)/.test(l)) return '';
-
-    // Lines containing "YouTube Script" (title blocks)
-    if (/youtube\s+script/i.test(l)) return '';
-
-    // Lines that are ONLY a style/metadata label word
+    // Drop style/metadata label-only lines
     if (/^(entertainment|tutorial|how-to|opinion|commentary|news|explainer|storytime|narrative|tech|short|medium|long|minutes?)\s*$/i.test(l)) return '';
 
-    // Horizontal rules
-    if (/^[-=]{3,}$/.test(l)) return '';
-
-    // Square-bracket stage direction labels on their own line: [HOOK], [CLOSING], etc.
-    if (/^\[[\w\s/&:,.'"\d-]+\][:,]?\s*$/.test(l)) return '';
-
-    // HTML tags — if line is entirely HTML markup, drop it
+    // Drop lines that are entirely HTML tags
     if (/^<[^>]+>$/.test(l)) return '';
 
-    // Indented code blocks (4 spaces indent = markdown code)
-    if (/^    \S/.test(raw)) return nextCodePhrase();
+    // Indented code blocks (4 spaces) → spoken phrase
+    if (/^    \S/.test(original)) return nextCodePhrase();
 
-    // Lines that look like pure CLI invocations with multiple flags:
-    // e.g.  ffmpeg -i input.mp4 -vf scale=1280:720 -c:v libx264 output.mp4
+    // CLI commands with 2+ flags → spoken placeholder
     if ((l.match(/(?:^|\s)-{1,2}[a-zA-Z]/g) || []).length >= 2) {
-      return '[terminal command shown on screen]';
+      return 'You can see the terminal command on screen.';
     }
 
-    // ── Inline substitutions ────────────────────────────────────────────────
+    // ── Inline substitutions ──────────────────────────────────────────────────
 
-    // Parenthetical stage directions: (pause) (smiles at camera) (Tone: X)
-    l = l.replace(/\([^)]*\)/g, '');
+    // Standalone parenthetical stage directions on own line: (Pause for effect)
+    if (/^\([^)]*\)\s*$/.test(l)) return '';
+
+    // Delivery-word parentheticals: (speaking fast), (pause), (smile)
+    l = l.replace(DELIVERY_RE, '');
+
+    // Remaining parentheticals that look like stage directions (all caps, short)
+    l = l.replace(/\(([A-Z][^a-z)]{0,30})\)/g, '');
 
     // URLs → spoken placeholder
-    l = l.replace(/https?:\/\/[^\s)>"']+/g, '[link shown on screen]');
+    l = l.replace(/https?:\/\/[^\s)>"']+/g, 'the link shown on screen');
 
-    // File paths: /path/to/file or ~/path/to/file
-    l = l.replace(/(?:~\/|\/)[/\w.\-]+(?:\/[\w.\-]+)+/g, '[file path shown on screen]');
+    // File paths: /path/to/file or ~/path
+    l = l.replace(/(?:~\/|\/)[/\w.\-]+(?:\/[\w.\-]+)+/g, 'the file path shown on screen');
 
-    // node@18.0.0 style version pinning → "node version 18"
+    // package@version → "package version N"
     l = l.replace(/\b([\w-]+)@(\d+)\.[\d.]+/g, '$1 version $2');
 
-    // Semver prefixes: ^1.2.3  ~2.0.0  → remove
+    // Semver range prefixes: ^1.2.3  ~2.0.0
     l = l.replace(/[\^~](\d+\.\d+[\d.]*)/g, '');
 
-    // Inline code: `...`
+    // Inline code: `code` → natural language or bare identifier
     l = l.replace(/`([^`\n]+)`/g, (_, code) => {
       const c = code.trim();
-      // Shell / package-manager commands → "X command"
-      if (/^(npm|yarn|pnpm|npx|node|python|pip|brew|apt|cargo|go\s|docker|kubectl|git|curl|wget|ssh|scp|chmod|chown|mkdir|cd|ls|cat|grep|sed|awk)\b/.test(c)) {
-        const cmd = c.split(/\s+/)[0];
-        return `${cmd} command`;
+      if (/^(npm|yarn|pnpm|npx|node|python|pip|brew|apt|cargo|docker|kubectl|git|curl|wget|ssh|scp|chmod|chown|mkdir|cd|ls|cat|grep|sed|awk)\b/.test(c)) {
+        return c.split(/\s+/)[0] + ' command';
       }
-      // Otherwise just remove the backticks and keep the identifier
       return c;
     });
 
-    // HTML tags inline: <div>, </span>, className="..." → remove
+    // HTML tags
     l = l.replace(/<[^>]+>/g, '');
 
     // **bold** → keep content
     l = l.replace(/\*\*([^*\n]+)\*\*/g, '$1');
 
-    // *stage direction* → remove entirely
+    // *italic/stage direction* → remove (single asterisk = usually a direction)
     l = l.replace(/\*[^*\n]+\*/g, '');
 
     // __bold__ / _italic_ → keep content
     l = l.replace(/__([^_\n]+)__/g, '$1');
     l = l.replace(/_([^_\n]+)_/g, '$1');
 
-    // Blockquote symbol → keep content
+    // Blockquote marker
     l = l.replace(/^>\s*/, '');
 
-    // Leading bullet or dash → keep content
+    // Leading bullet/dash
     l = l.replace(/^[-•]\s+/, '');
 
-    return l.trim();
+    // Collapse multiple spaces
+    l = l.replace(/  +/g, ' ').trim();
+
+    return l;
   });
 
-  return lines
+  // ── Phase 4: Final cleanup ────────────────────────────────────────────────────
+
+  return processedLines
     .filter(l => l.length > 0)
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
