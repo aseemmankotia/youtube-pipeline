@@ -30,9 +30,12 @@ const axios        = require('axios');
 const puppeteer    = require('puppeteer');
 const { execSync } = require('child_process');
 
-const INPUT_FILE = path.join(__dirname, 'render-input.json');
-const SLIDES_DIR = path.join(__dirname, 'slides');
-const TEMP_DIR   = path.join(__dirname, 'temp');
+const INPUT_FILE  = path.join(__dirname, 'render-input.json');
+const SLIDES_DIR  = path.join(__dirname, 'slides');
+const TEMP_DIR    = path.join(__dirname, 'temp');
+const CACHE_FILE  = path.join(__dirname, 'slides', 'section-cache.json');
+const CACHE_TTL   = 7 * 24 * 60 * 60 * 1000; // 7 days
+const FORCE_REFRESH = process.argv.includes('--force-refresh');
 
 // ── PIP configuration ──────────────────────────────────────────────────────────
 // Avatar width in pixels (height auto-calculated to preserve aspect ratio).
@@ -66,10 +69,28 @@ async function main() {
   const ffmpeg  = findBinary('ffmpeg');
   const ffprobe = findBinary('ffprobe');
 
-  // ── Step 1: Split script into sections ──────────────────────────────────────
-  log('\n🤖 Step 1 — Splitting script into sections via Anthropic API…');
-  const contentSections = await splitScript(script, topic);
-  log(`   ✓ ${contentSections.length} sections`);
+  // ── Step 1: Split script into sections (cache-aware) ────────────────────────
+  log('\n🤖 Step 1 — Splitting script into sections…');
+  cleanSectionCache();  // purge entries older than 7 days
+  const hash = scriptHash(script);
+  let contentSections;
+
+  if (!FORCE_REFRESH) {
+    const hit = readSectionCache(hash);
+    if (hit) {
+      log(`   ⚡ Using cached section analysis (saved ~$0.08) · cached at ${hit.cached_at}`);
+      contentSections = hit.sections;
+    }
+  }
+
+  if (!contentSections) {
+    if (FORCE_REFRESH) log('   --force-refresh: skipping cache');
+    contentSections = await splitScript(script, topic);
+    writeSectionCache(hash, contentSections, topic);
+    log(`   ✓ ${contentSections.length} sections · saved to cache`);
+  } else {
+    log(`   ✓ ${contentSections.length} sections`);
+  }
 
   // Prepend branded title slide (fixed 4 s)
   const titleSection = { type: 'title', title: topic, hook, niche, duration_seconds: 4 };
@@ -97,6 +118,57 @@ async function main() {
   await composite(ffmpeg, ffprobe, timed, heygenPath, outPath);
 
   log(`\n✅ Render complete: ${output_filename}`);
+}
+
+// ── Section analysis cache ─────────────────────────────────────────────────────
+
+function scriptHash(script) {
+  const str = script.slice(0, 500) + script.slice(-500);
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash) + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash).toString(16);
+}
+
+function loadCacheFile() {
+  try {
+    if (fs.existsSync(CACHE_FILE)) return JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
+  } catch {}
+  return {};
+}
+
+function saveCacheFile(data) {
+  try { fs.writeFileSync(CACHE_FILE, JSON.stringify(data, null, 2), 'utf8'); } catch {}
+}
+
+function readSectionCache(hash) {
+  const cache = loadCacheFile();
+  const entry = cache[hash];
+  if (!entry) return null;
+  if ((Date.now() - new Date(entry.cached_at).getTime()) > CACHE_TTL) return null;
+  return entry;
+}
+
+function writeSectionCache(hash, sections, topic) {
+  const cache = loadCacheFile();
+  cache[hash] = { sections, topic, cached_at: new Date().toISOString() };
+  saveCacheFile(cache);
+}
+
+function cleanSectionCache() {
+  try {
+    const cache = loadCacheFile();
+    let removed = 0;
+    for (const hash of Object.keys(cache)) {
+      if ((Date.now() - new Date(cache[hash].cached_at).getTime()) > CACHE_TTL) {
+        delete cache[hash];
+        removed++;
+      }
+    }
+    if (removed > 0) { saveCacheFile(cache); log(`   🗑 Purged ${removed} expired cache entries`); }
+  } catch {}
 }
 
 // ── cleanScript (mirrors components/clean-script.js for Node.js) ──────────────

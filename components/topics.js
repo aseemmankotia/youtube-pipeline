@@ -1,16 +1,89 @@
 /**
  * Trending Topics Component
- * Uses the Claude API with the web_search tool to fetch the top 50
+ * Uses the Claude API with the web_search tool to fetch the top 20
  * genuinely trending topics for any niche in real time.
+ * Results are cached in localStorage for 24 hours.
  */
 
-import { getSettings } from './settings.js';
+import { getSettings }                           from './settings.js';
+import { trackUsage, trackCacheSaving,
+         TOPIC_SEARCH_COST, getAllTimeSavings,
+         fmtCost }                               from './usage.js';
 
 const NICHES = [
   'AI & Technology', 'Personal Finance', 'Health & Fitness',
   'Gaming', 'Cooking & Food', 'Travel', 'Self-Improvement',
   'Crypto & Web3', 'Science', 'Business & Entrepreneurship',
 ];
+
+const CACHE_TTL    = 24 * 60 * 60 * 1000; // 24 hours
+const CACHE_PREFIX = 'topics_cache_';
+
+// ── Cache helpers ─────────────────────────────────────────────────────────────
+
+function cacheKey(niche)  { return CACHE_PREFIX + niche; }
+
+function loadCache(niche) {
+  try {
+    const raw = localStorage.getItem(cacheKey(niche));
+    if (!raw) return null;
+    const c = JSON.parse(raw);
+    if ((Date.now() - c.timestamp) < CACHE_TTL) return c;
+  } catch {}
+  return null;
+}
+
+function saveCache(niche, topics) {
+  try {
+    localStorage.setItem(cacheKey(niche), JSON.stringify({
+      topics, timestamp: Date.now(), niche,
+    }));
+  } catch {}
+}
+
+function deleteCache(niche) {
+  localStorage.removeItem(cacheKey(niche));
+}
+
+function clearAllCaches() {
+  Object.keys(localStorage)
+    .filter(k => k.startsWith(CACHE_PREFIX))
+    .forEach(k => localStorage.removeItem(k));
+}
+
+function getCachedNiches() {
+  return Object.keys(localStorage)
+    .filter(k => k.startsWith(CACHE_PREFIX))
+    .map(k => {
+      try {
+        const c = JSON.parse(localStorage.getItem(k));
+        if ((Date.now() - c.timestamp) < CACHE_TTL) return c.niche;
+      } catch {}
+      return null;
+    })
+    .filter(Boolean);
+}
+
+function cacheAgeHours(niche) {
+  try {
+    const raw = localStorage.getItem(cacheKey(niche));
+    if (!raw) return null;
+    const c = JSON.parse(raw);
+    return ((Date.now() - c.timestamp) / 3_600_000).toFixed(1);
+  } catch { return null; }
+}
+
+function cacheRemainingHours(niche) {
+  try {
+    const raw = localStorage.getItem(cacheKey(niche));
+    if (!raw) return null;
+    const c = JSON.parse(raw);
+    const remaining = CACHE_TTL - (Date.now() - c.timestamp);
+    return Math.max(0, Math.ceil(remaining / 3_600_000));
+  } catch { return null; }
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
 
 export function renderTopics(container, onTopicSelect) {
   container.innerHTML = `
@@ -31,27 +104,104 @@ export function renderTopics(container, onTopicSelect) {
       <button class="btn btn-primary" id="fetch-topics-btn">
         <span>Search Trends</span>
       </button>
+      <button class="btn btn-secondary" id="clear-cache-btn"
+        style="font-size:0.78rem;padding:5px 12px;">
+        🗑 Clear all cached topics
+      </button>
       <div id="topics-status"></div>
+      <div id="cache-savings-display" style="font-size:0.8rem;color:#7af57a;margin-top:8px;display:none;"></div>
     </div>
     <div id="topics-results"></div>
   `;
 
+  // Mark cached niches in dropdown with ⚡
+  updateNicheDropdown(container);
+
+  // Update cache savings display
+  updateCacheSavingsDisplay(container);
+
   container.querySelector('#fetch-topics-btn')
-    .addEventListener('click', () => fetchTopics(container, onTopicSelect));
+    .addEventListener('click', () => fetchTopics(container, onTopicSelect, false));
+
+  container.querySelector('#clear-cache-btn')
+    .addEventListener('click', () => {
+      const cachedCount = getCachedNiches().length;
+      clearAllCaches();
+      updateNicheDropdown(container);
+      updateCacheSavingsDisplay(container);
+      const statusEl = container.querySelector('#topics-status');
+      statusEl.innerHTML = `<div class="status-bar info">🗑 Cleared ${cachedCount} cached niche${cachedCount !== 1 ? 's' : ''}.</div>`;
+      setTimeout(() => { statusEl.innerHTML = ''; }, 3000);
+    });
 }
 
-async function fetchTopics(container, onTopicSelect) {
+function updateNicheDropdown(container) {
+  const cached = getCachedNiches();
+  const select = container.querySelector('#niche-select');
+  if (!select) return;
+  Array.from(select.options).forEach(opt => {
+    const isCached = cached.includes(opt.value);
+    opt.textContent = isCached ? `${opt.value} ⚡` : opt.value;
+  });
+}
+
+function updateCacheSavingsDisplay(container) {
+  const total = getAllTimeSavings();
+  const el    = container.querySelector('#cache-savings-display');
+  if (!el) return;
+  if (total > 0) {
+    el.style.display = 'block';
+    el.textContent   = `⚡ Cache has saved you ${fmtCost(total)} so far`;
+  } else {
+    el.style.display = 'none';
+  }
+}
+
+// ── Fetch (cache-aware) ───────────────────────────────────────────────────────
+
+async function fetchTopics(container, onTopicSelect, forceRefresh) {
   const nicheSelect = container.querySelector('#niche-select').value;
   const customNiche = container.querySelector('#custom-niche').value.trim();
-  const niche = customNiche || nicheSelect;
+  // Strip the ⚡ marker that may have been added to the option text
+  const niche = (customNiche || nicheSelect).replace(/\s*⚡$/, '');
 
   const statusEl  = container.querySelector('#topics-status');
   const resultsEl = container.querySelector('#topics-results');
   const btn       = container.querySelector('#fetch-topics-btn');
 
+  // ── Check cache ──────────────────────────────────────────────────────────
+  if (!forceRefresh) {
+    const cached = loadCache(niche);
+    if (cached) {
+      const hoursLeft = cacheRemainingHours(niche);
+      statusEl.innerHTML = `
+        <div class="status-bar success" style="flex-direction:column;align-items:flex-start;gap:6px;">
+          <span>⚡ Loaded from cache (saved ~${fmtCost(TOPIC_SEARCH_COST)}) · Refreshes in ${hoursLeft}h
+            <button id="force-refresh-btn" class="link-btn"
+              style="margin-left:10px;color:#7ab8f5;text-decoration:underline;
+                     background:none;border:none;cursor:pointer;font-size:inherit;">
+              Force refresh
+            </button>
+          </span>
+        </div>`;
+
+      container.querySelector('#force-refresh-btn')?.addEventListener('click', () => {
+        deleteCache(niche);
+        updateNicheDropdown(container);
+        fetchTopics(container, onTopicSelect, true);
+      });
+
+      trackCacheSaving('topic_search', TOPIC_SEARCH_COST, { niche });
+      updateCacheSavingsDisplay(container);
+      renderTopicCards(resultsEl, cached.topics, niche, onTopicSelect);
+      return;
+    }
+  }
+
+  // ── Live API call ────────────────────────────────────────────────────────
   btn.disabled = true;
   btn.innerHTML = '<span class="loader"></span><span>Searching…</span>';
-  statusEl.innerHTML  = `
+  statusEl.innerHTML = `
     <div class="status-bar info">
       <span class="loader"></span>
       Searching the web for trending topics in <strong>${escHtml(niche)}</strong>…
@@ -59,33 +209,38 @@ async function fetchTopics(container, onTopicSelect) {
   resultsEl.innerHTML = '';
 
   try {
-    const topics = await liveSearch(niche, statusEl);
+    const { topics, inputTokens, outputTokens } = await liveSearch(niche, statusEl);
+
+    // Cache result
+    saveCache(niche, topics);
+    updateNicheDropdown(container);
+
+    // Track usage
+    trackUsage('topic_search', inputTokens, outputTokens, { niche });
+
     statusEl.innerHTML = `
       <div class="status-bar success">
-        Showing top 20 trending topics for <strong>${escHtml(niche)}</strong>.
+        🔍 Live search complete · Showing top ${topics.length} topics for
+        <strong>${escHtml(niche)}</strong> · Results cached for 24 hours
       </div>`;
+
     renderTopicCards(resultsEl, topics, niche, onTopicSelect);
   } catch (err) {
-    statusEl.innerHTML = `
-      <div class="status-bar error">
-        ${escHtml(err.message)}
-      </div>`;
+    statusEl.innerHTML = `<div class="status-bar error">${escHtml(err.message)}</div>`;
   } finally {
     btn.disabled = false;
     btn.innerHTML = '<span>Search Trends</span>';
   }
 }
 
-// Fetch with exponential backoff on 429 rate-limit errors.
-// waits: 10s → 30s, then throws.
+// ── Retry with exponential backoff ────────────────────────────────────────────
+
 async function fetchWithRetry(url, options, statusEl) {
   const delays = [10, 30];
   for (let attempt = 0; attempt <= delays.length; attempt++) {
     const res = await fetch(url, options);
     if (res.status !== 429) return res;
-
-    if (attempt === delays.length) return res; // let caller handle final 429
-
+    if (attempt === delays.length) return res;
     const wait = delays[attempt];
     await showCountdown(statusEl, wait);
   }
@@ -102,6 +257,8 @@ async function showCountdown(statusEl, seconds) {
     await new Promise(r => setTimeout(r, 1000));
   }
 }
+
+// ── Claude live search ────────────────────────────────────────────────────────
 
 async function liveSearch(niche, statusEl) {
   const { claudeApiKey } = getSettings();
@@ -135,30 +292,26 @@ async function liveSearch(niche, statusEl) {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    if (res.status === 429) {
-      throw new Error('Rate limit hit — please wait 30 seconds and try again.');
-    }
+    if (res.status === 429) throw new Error('Rate limit hit — please wait 30 seconds and try again.');
     throw new Error(`Claude API error (${res.status}): ${err?.error?.message || res.statusText}`);
   }
 
   const data = await res.json();
 
-  // Debug: log all content blocks so failures are diagnosable
+  // Extract token usage
+  const inputTokens  = data.usage?.input_tokens  || 0;
+  const outputTokens = data.usage?.output_tokens || 0;
+
   console.log('[topics] content blocks:', (data.content || []).map(b => ({
     type: b.type,
     textPreview: b.type === 'text' ? b.text?.slice(0, 120) : undefined,
   })));
 
-  // Collect all text blocks (tool_use / tool_result blocks are skipped)
   const textBlocks = (data.content || []).filter(b => b.type === 'text');
-  if (!textBlocks.length) {
-    throw new Error('No text response from Claude. Please try again.');
-  }
+  if (!textBlocks.length) throw new Error('No text response from Claude. Please try again.');
 
-  // Use the last text block — Claude puts its final answer there
   const fullText = textBlocks[textBlocks.length - 1].text || '';
 
-  // Extract the JSON array, handling fences and surrounding explanation text
   let parsed;
   try {
     const clean = fullText.replace(/```json|```/g, '').trim();
@@ -174,15 +327,18 @@ async function liveSearch(niche, statusEl) {
     throw new Error('Invalid topics format returned. Please try again.');
   }
 
-  // Normalise fields so the rest of the UI always gets { title, desc, trend }
-  return parsed.map((item, i) => ({
+  const topics = parsed.map(item => ({
     title: String(item.title || '').trim(),
     desc:  String(item.summary || item.desc || '').trim(),
     trend: (item.tags && item.tags[0]) ? String(item.tags[0]) : 'Trending',
     hook:  String(item.hook || '').trim(),
     tags:  Array.isArray(item.tags) ? item.tags : [],
   })).filter(t => t.title);
+
+  return { topics, inputTokens, outputTokens };
 }
+
+// ── Topic cards ───────────────────────────────────────────────────────────────
 
 function renderTopicCards(container, topics, niche, onTopicSelect) {
   container.innerHTML = `
@@ -208,7 +364,6 @@ function renderTopicCards(container, topics, niche, onTopicSelect) {
     </div>
   `;
 
-  // Click to select — pass hook through so script tab can use it
   container.querySelectorAll('.topic-item').forEach(el => {
     el.addEventListener('click', () => {
       container.querySelectorAll('.topic-item').forEach(e => e.classList.remove('selected'));
@@ -217,7 +372,6 @@ function renderTopicCards(container, topics, niche, onTopicSelect) {
     });
   });
 
-  // Filter box
   container.querySelector('#topics-filter').addEventListener('input', (e) => {
     const q = e.target.value.toLowerCase();
     let visible = 0;
@@ -245,8 +399,6 @@ function topicCardHtml(t, i) {
 
 function escHtml(str) {
   return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }

@@ -3,8 +3,9 @@
  * Credentials are read from Settings tab via getSettings().
  */
 
-import { getSettings } from './settings.js';
-import { cleanScript } from './clean-script.js';
+import { getSettings }        from './settings.js';
+import { cleanScript }        from './clean-script.js';
+import { trackUsage, fmtCost } from './usage.js';
 
 const TONES   = ['Engaging & Energetic', 'Educational & Calm', 'Humorous & Casual', 'Inspirational', 'Documentary-Style'];
 const LENGTHS = ['Short (3–5 min)', 'Medium (8–12 min)', 'Long (18–25 min)', 'Extended (25–30 min)'];
@@ -437,6 +438,12 @@ Return ONLY the expanded script, no commentary.`;
     const newScript = data.content?.[0]?.text || '';
     if (!newScript) throw new Error('Empty response from Claude.');
 
+    trackUsage(
+      isShorten ? 'script_shorten' : 'script_expand',
+      data.usage?.input_tokens  || 0,
+      data.usage?.output_tokens || 0
+    );
+
     const prevWC = wordCount(container._script);
     setScript(container, newScript);
     const newWC  = wordCount(newScript);
@@ -519,6 +526,12 @@ Write for the ear. Keep opening/closing human, not templated. Output only the sc
     const data       = await res.json();
     const chunk      = data.content?.[0]?.text || '';
     const stopReason = data.stop_reason;
+
+    // Track token usage for this pass
+    trackUsage('script_gen',
+      data.usage?.input_tokens  || 0,
+      data.usage?.output_tokens || 0,
+      { topic, pass });
 
     fullScript += (pass === 0 ? chunk : chunk.trimStart());
 

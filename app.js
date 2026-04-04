@@ -6,6 +6,11 @@ import { renderHistory, saveHistoryEntry, updateHistoryByHeygenId } from './comp
 import { renderSettings, getSettings } from './components/settings.js';
 import { logToSheets }        from './components/sheets.js';
 import { sendEmailSummary }   from './components/email.js';
+import {
+  getTodayCost, getTodayEntries, getTodaySavings,
+  getThisWeekCost, getAllTimeCost, getAllTimeSavings,
+  groupByAction, resetToday, fmtCost,
+} from './components/usage.js';
 
 // ── Tab routing ──────────────────────────────────────────────────────────────
 
@@ -128,6 +133,125 @@ document.addEventListener('upload-complete', (e) => {
     settings,
   }).catch(err => console.warn('[Email] Failed to send:', err.message));
 });
+
+// ── Usage widget ─────────────────────────────────────────────────────────────
+
+const usageBtn = document.getElementById('usage-widget-btn');
+
+function updateUsageWidget() {
+  const cost = getTodayCost();
+  usageBtn.textContent = `💰 ${fmtCost(cost)} today`;
+  usageBtn.className = 'usage-widget-btn ' +
+    (cost < 0.5 ? 'usage-green' : cost < 2 ? 'usage-amber' : 'usage-red');
+  if (cost >= 2) usageBtn.title = '⚠️ High API spend today — consider using cached results';
+  else usageBtn.title = 'Click to see API cost breakdown';
+}
+
+updateUsageWidget();
+document.addEventListener('usage-updated', updateUsageWidget);
+
+usageBtn.addEventListener('click', showUsageModal);
+
+const ACTION_LABELS = {
+  topic_search:   'Topic search',
+  script_gen:     'Script generation',
+  script_shorten: 'Make shorter',
+  script_expand:  'Make longer',
+  slide_preview:  'Slide preview',
+};
+
+function showUsageModal() {
+  document.querySelector('.usage-modal-overlay')?.remove();
+
+  const todayEntries = getTodayEntries();
+  const todayCost    = getTodayCost();
+  const todaySavings = getTodaySavings();
+  const weekCost     = getThisWeekCost();
+  const allTime      = getAllTimeCost();
+  const allSavings   = getAllTimeSavings();
+  const byAction     = groupByAction(todayEntries);
+
+  const rows = Object.entries(byAction).map(([action, d]) => `
+    <tr>
+      <td>${ACTION_LABELS[action] || action}</td>
+      <td style="text-align:center">${d.calls}</td>
+      <td style="text-align:right">${fmtCost(d.cost)}</td>
+    </tr>`).join('');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'usage-modal-overlay';
+  overlay.innerHTML = `
+    <div class="usage-modal">
+      <div class="usage-modal-header">
+        <h3 style="margin:0;">💰 API Cost Monitor</h3>
+        <button id="usage-modal-close" class="usage-modal-close">✕</button>
+      </div>
+
+      <div class="usage-modal-body">
+        <div class="usage-stat-row">
+          <span>Today</span><strong>${fmtCost(todayCost)}</strong>
+        </div>
+        <div class="usage-stat-row">
+          <span>This week</span><strong>${fmtCost(weekCost)}</strong>
+        </div>
+        <div class="usage-stat-row">
+          <span>All time</span><strong>${fmtCost(allTime)}</strong>
+        </div>
+        ${todaySavings > 0 ? `
+        <div class="usage-stat-row" style="color:#7af57a;">
+          <span>💚 Saved by cache today</span><strong>${fmtCost(todaySavings)}</strong>
+        </div>` : ''}
+        ${allSavings > 0 ? `
+        <div class="usage-stat-row" style="color:#7af57a;font-size:0.8rem;">
+          <span>⚡ Total saved by cache</span><strong>${fmtCost(allSavings)}</strong>
+        </div>` : ''}
+
+        ${todayEntries.length > 0 ? `
+        <table class="usage-table">
+          <thead>
+            <tr>
+              <th>Action</th><th style="text-align:center">Calls</th>
+              <th style="text-align:right">Cost</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+          <tfoot>
+            <tr>
+              <td><strong>Total today</strong></td>
+              <td style="text-align:center"><strong>${todayEntries.length}</strong></td>
+              <td style="text-align:right"><strong>${fmtCost(todayCost)}</strong></td>
+            </tr>
+          </tfoot>
+        </table>` : `
+        <p style="text-align:center;color:var(--muted);padding:20px 0;font-size:0.88rem;">
+          No API calls recorded today.
+        </p>`}
+
+        <div style="display:flex;justify-content:space-between;align-items:center;
+                    margin-top:16px;padding-top:14px;border-top:1px solid var(--border);">
+          <span style="font-size:0.75rem;color:var(--muted);">
+            Updated ${new Date().toLocaleTimeString()}
+          </span>
+          <button id="usage-reset-btn" class="btn btn-secondary"
+            style="font-size:0.78rem;padding:4px 12px;">
+            Reset today's counter
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  overlay.querySelector('#usage-modal-close').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  overlay.querySelector('#usage-reset-btn').addEventListener('click', () => {
+    resetToday();
+    overlay.remove();
+  });
+}
+
+// ── Test email button (dispatched by settings.js) ─────────────────────────────
 
 // Test email button (dispatched by settings.js)
 document.addEventListener('test-email', (e) => {

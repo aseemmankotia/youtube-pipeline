@@ -6,8 +6,9 @@
  * Stage C — Optional: run render.js locally to add slides (PIP)
  */
 
-import { getSettings } from './settings.js';
-import { cleanScript }  from './clean-script.js';
+import { getSettings }        from './settings.js';
+import { cleanScript }        from './clean-script.js';
+import { trackUsage }         from './usage.js';
 
 export function renderHeyGen(container) {
   container.innerHTML = `
@@ -330,6 +331,12 @@ Return ONLY valid JSON, no markdown fences:
 
     if (!res.ok) throw new Error(`API error ${res.status}`);
     const data = await res.json();
+
+    trackUsage('slide_preview',
+      data.usage?.input_tokens  || 0,
+      data.usage?.output_tokens || 0,
+      { topic });
+
     let raw = (data.content?.find(b => b.type === 'text')?.text || '').trim();
     raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
     const sections = JSON.parse(raw).sections || [];
