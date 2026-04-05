@@ -5,7 +5,8 @@
   "main": "app.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "render": "node render.js"
+    "render": "node render.js",
+    "highlight": "node highlight.js"
   },
   "repository": {
     "type": "git",

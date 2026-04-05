@@ -1,7 +1,8 @@
-import { renderTopics }   from './components/topics.js';
-import { renderScript }   from './components/script.js';
-import { renderHeyGen }   from './components/heygen.js';
-import { renderYouTube }  from './components/youtube.js';
+import { renderTopics }    from './components/topics.js';
+import { renderScript }    from './components/script.js';
+import { renderHeyGen }    from './components/heygen.js';
+import { renderYouTube }   from './components/youtube.js';
+import { renderDistribute } from './components/distribute.js';
 import { renderHistory, saveHistoryEntry, updateHistoryByHeygenId } from './components/history.js';
 import { renderSettings, getSettings } from './components/settings.js';
 import { logToSheets }        from './components/sheets.js';
@@ -28,17 +29,19 @@ tabBtns.forEach(btn => {
 
 // ── Mount components ─────────────────────────────────────────────────────────
 
-const topicsPanel   = document.getElementById('tab-topics');
-const scriptPanel   = document.getElementById('tab-script');
-const videoPanel    = document.getElementById('tab-video');
-const uploadPanel   = document.getElementById('tab-upload');
-const historyPanel  = document.getElementById('tab-history');
-const settingsPanel = document.getElementById('tab-settings');
+const topicsPanel      = document.getElementById('tab-topics');
+const scriptPanel      = document.getElementById('tab-script');
+const videoPanel       = document.getElementById('tab-video');
+const uploadPanel      = document.getElementById('tab-upload');
+const distributePanel  = document.getElementById('tab-distribute');
+const historyPanel     = document.getElementById('tab-history');
+const settingsPanel    = document.getElementById('tab-settings');
 
 renderTopics(topicsPanel, onTopicSelect);
 renderScript(scriptPanel);
 renderHeyGen(videoPanel);
 renderYouTube(uploadPanel);
+renderDistribute(distributePanel);
 renderHistory(historyPanel);
 renderSettings(settingsPanel);
 
@@ -57,6 +60,10 @@ document.addEventListener('settings-changed', updateSettingsDot);
 
 // ── Auto-pipeline event chain ─────────────────────────────────────────────────
 
+// Track script + topic across pipeline steps so distribute tab can use them
+let _pipelineScript = '';
+let _pipelineTopic  = '';
+
 // Step 1 → Step 2: topic selected → pre-fill script input + store meta for render-input
 function onTopicSelect(topic, niche) {
   if (scriptPanel._setTopic)       scriptPanel._setTopic(topic);
@@ -72,6 +79,9 @@ document.addEventListener('send-to-video', (e) => {
 // Step 3 complete: save history entry + log to Sheets
 document.addEventListener('video-complete', async (e) => {
   const { videoUrl, videoId, script, topic } = e.detail || {};
+  // Persist for distribute tab
+  if (script) _pipelineScript = script;
+  if (topic)  _pipelineTopic  = typeof topic === 'object' ? (topic.title || '') : topic;
 
   // Hand off to upload tab (await so description is generated before we read it)
   if (uploadPanel._setVideoData) await uploadPanel._setVideoData({ videoUrl, script, topic });
@@ -100,10 +110,33 @@ document.addEventListener('video-complete', async (e) => {
   });
 });
 
-// Step 4 complete: update history, log to Sheets, send email
+// Distribution channel update → append to history entry
+document.addEventListener('distribution-update', (e) => {
+  const { heygenVideoId, channel } = e.detail || {};
+  if (!heygenVideoId) return;
+  // Append channel to distributedTo array in history
+  const { loadHistory } = window.__historyHelpers || {};
+  updateHistoryByHeygenId(heygenVideoId, { _distributionChannel: channel });
+});
+
+// Step 4 complete: update history, log to Sheets, send email, populate distribute tab
 document.addEventListener('upload-complete', (e) => {
   const { videoId: ytVideoId, ytUrl, youtubeTitle, heygenVideoId, heygenVideoUrl } = e.detail || {};
   const topic = youtubeTitle || '';
+
+  // Auto-populate distribute tab and switch to it
+  if (distributePanel._setVideoData) {
+    distributePanel._setVideoData({
+      title:          topic,
+      ytUrl:          ytUrl || '',
+      script:         _pipelineScript,
+      topic:          _pipelineTopic || topic,
+      description:    uploadPanel._generatedDescription || '',
+      heygenVideoId:  heygenVideoId || '',
+      heygenVideoUrl: heygenVideoUrl || '',
+    });
+  }
+  switchTab('distribute');
 
   // Update existing history entry to uploaded (preserve description already saved)
   if (heygenVideoId) {

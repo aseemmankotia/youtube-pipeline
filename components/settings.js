@@ -129,6 +129,75 @@ export function renderSettings(container) {
         <span id="sg-test-email-status" style="font-size:0.85rem;color:var(--muted);"></span>
       </div>
     </div>
+
+    <div class="card">
+      <h2>Reddit Distribution</h2>
+      <p style="font-size:0.85rem;color:var(--muted);margin-bottom:16px;">
+        Create a Reddit "script" app at
+        <a href="https://www.reddit.com/prefs/apps" target="_blank" rel="noopener"
+          style="color:var(--accent);">reddit.com/prefs/apps</a>.
+        Set type to <strong>script</strong>.
+        Note: browser CORS may block direct posting — use from a local server context.
+      </p>
+      <div class="form-row">
+        <div class="form-group" data-field="redditClientId">
+          <label for="sg-reddit-id">Client ID</label>
+          <input type="text" id="sg-reddit-id"
+            placeholder="14-character app ID" value="${esc(s.redditClientId)}" />
+        </div>
+        <div class="form-group" data-field="redditClientSecret">
+          <label for="sg-reddit-secret">Client Secret</label>
+          <input type="password" id="sg-reddit-secret"
+            placeholder="App secret" autocomplete="off" value="${esc(s.redditClientSecret)}" />
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group" data-field="redditUsername">
+          <label for="sg-reddit-user">Reddit Username</label>
+          <input type="text" id="sg-reddit-user"
+            placeholder="u/yourusername (without u/)" value="${esc(s.redditUsername)}" />
+        </div>
+        <div class="form-group" data-field="redditPassword">
+          <label for="sg-reddit-pass">Reddit Password</label>
+          <input type="password" id="sg-reddit-pass"
+            autocomplete="off" value="${esc(s.redditPassword)}" />
+        </div>
+      </div>
+      <div class="form-group" data-field="redditSubreddits">
+        <label for="sg-reddit-subs">Default Subreddits (comma-separated, without r/)</label>
+        <input type="text" id="sg-reddit-subs"
+          placeholder="programming, webdev, learnprogramming, technology, artificial"
+          value="${esc(s.redditSubreddits)}" />
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Article Publishing</h2>
+      <div class="form-group" data-field="devToApiKey">
+        <label for="sg-devto-key">
+          Dev.to API Key
+          <span style="color:var(--muted);font-weight:400"> — Settings → Account → DEV Community API Keys</span>
+        </label>
+        <input type="password" id="sg-devto-key"
+          autocomplete="off" placeholder="Dev.to API key" value="${esc(s.devToApiKey)}" />
+      </div>
+      <div class="form-row">
+        <div class="form-group" data-field="hashnodeApiKey">
+          <label for="sg-hashnode-key">
+            Hashnode API Key
+          </label>
+          <input type="password" id="sg-hashnode-key"
+            autocomplete="off" placeholder="Hashnode personal access token"
+            value="${esc(s.hashnodeApiKey)}" />
+        </div>
+        <div class="form-group" data-field="hashnodePublicationId">
+          <label for="sg-hashnode-pub">Hashnode Publication ID</label>
+          <input type="text" id="sg-hashnode-pub"
+            placeholder="Found in your blog dashboard URL"
+            value="${esc(s.hashnodePublicationId)}" />
+        </div>
+      </div>
+    </div>
   `;
 
   // Auto-save with debounce + checkmarks
@@ -164,16 +233,24 @@ function updateCheck(input) {
 
 function persist(container) {
   saveSettings({
-    claudeApiKey:     container.querySelector('#sg-claude-key').value.trim(),
-    heygenVoiceId:    container.querySelector('#sg-hg-voice').value.trim(),
-    ytClientId:       container.querySelector('#sg-yt-clientid').value.trim(),
-    ytClientSecret:   container.querySelector('#sg-yt-secret').value.trim(),
-    ytRefreshToken:   container.querySelector('#sg-yt-token').value.trim(),
-    sheetsId:         container.querySelector('#sg-sheets-id').value.trim(),
-    emailjsServiceId: container.querySelector('#sg-ejs-service').value.trim(),
-    emailjsTemplateId:container.querySelector('#sg-ejs-template').value.trim(),
-    emailjsPublicKey: container.querySelector('#sg-ejs-key').value.trim(),
-    recipientEmail:   container.querySelector('#sg-ejs-email').value.trim(),
+    claudeApiKey:          container.querySelector('#sg-claude-key').value.trim(),
+    heygenVoiceId:         container.querySelector('#sg-hg-voice').value.trim(),
+    ytClientId:            container.querySelector('#sg-yt-clientid').value.trim(),
+    ytClientSecret:        container.querySelector('#sg-yt-secret').value.trim(),
+    ytRefreshToken:        container.querySelector('#sg-yt-token').value.trim(),
+    sheetsId:              container.querySelector('#sg-sheets-id').value.trim(),
+    emailjsServiceId:      container.querySelector('#sg-ejs-service').value.trim(),
+    emailjsTemplateId:     container.querySelector('#sg-ejs-template').value.trim(),
+    emailjsPublicKey:      container.querySelector('#sg-ejs-key').value.trim(),
+    recipientEmail:        container.querySelector('#sg-ejs-email').value.trim(),
+    redditClientId:        container.querySelector('#sg-reddit-id').value.trim(),
+    redditClientSecret:    container.querySelector('#sg-reddit-secret').value.trim(),
+    redditUsername:        container.querySelector('#sg-reddit-user').value.trim(),
+    redditPassword:        container.querySelector('#sg-reddit-pass').value.trim(),
+    redditSubreddits:      container.querySelector('#sg-reddit-subs').value.trim(),
+    devToApiKey:           container.querySelector('#sg-devto-key').value.trim(),
+    hashnodeApiKey:        container.querySelector('#sg-hashnode-key').value.trim(),
+    hashnodePublicationId: container.querySelector('#sg-hashnode-pub').value.trim(),
   });
 }
 
