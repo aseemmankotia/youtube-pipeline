@@ -92,6 +92,13 @@ async function main() {
     log(`   ✓ ${contentSections.length} sections`);
   }
 
+  // Fix 1-5: clean placeholder text, validate diagrams, skip empty slides
+  const beforeCount = contentSections.length;
+  contentSections = preprocessSections(contentSections);
+  if (contentSections.length < beforeCount) {
+    log(`   ⏭ ${beforeCount - contentSections.length} slide(s) skipped after cleanup`);
+  }
+
   // Prepend branded title slide (fixed 4 s)
   const titleSection = { type: 'title', title: topic, hook, niche, duration_seconds: 4 };
   const sections = [titleSection, ...contentSections];
@@ -196,6 +203,109 @@ function cleanScript(raw) {
   return lines.filter(l => l.length > 0).join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
+// ── Fix 1 & 4: Placeholder detection + global slide text cleaner ───────────────
+
+const PLACEHOLDER_PATTERNS = [
+  /see (the )?diagram.*/gi,
+  /see (accompanying|related|attached).*/gi,
+  /refer to (the )?(diagram|figure|illustration).*/gi,
+  /\[diagram[^\]]*\]/gi,
+  /\[figure[^\]]*\]/gi,
+  /\[insert[^\]]*\]/gi,
+  /\[illustration[^\]]*\]/gi,
+  /diagram not available.*/gi,
+  /see figure \d+.*/gi,
+  /as shown in the (diagram|figure).*/gi,
+  /illustrated (below|above|in).*/gi,
+];
+
+function removePlaceholders(text) {
+  if (!text) return '';
+  let out = text;
+  for (const pat of PLACEHOLDER_PATTERNS) out = out.replace(pat, '');
+  return out.trim();
+}
+
+function cleanSlideText(text) {
+  if (!text) return '';
+  let t = removePlaceholders(text);
+  // Strip residual markdown
+  t = t.replace(/\*\*/g, '').replace(/\*/g, '');
+  t = t.replace(/#{1,6}\s*/g, '');
+  t = t.replace(/`/g, '');
+  // Remove bracketed content and "see …" parentheticals
+  t = t.replace(/\[[^\]]*\]/g, '');
+  t = t.replace(/\([^)]*see[^)]*\)/gi, '');
+  // Collapse whitespace
+  return t.replace(/\s+/g, ' ').trim();
+}
+
+// ── Fix 3: Mermaid code validator ─────────────────────────────────────────────
+
+const VALID_MERMAID_STARTS = [
+  'flowchart', 'graph', 'sequencediagram',
+  'classdiagram', 'statediagram', 'erdiagram',
+  'gantt', 'pie', 'gitgraph', 'mindmap',
+];
+
+function isValidMermaidCode(code) {
+  if (!code || code.length < 10) return false;
+  const firstWord = code.trim().split(/[\s\n]/)[0].toLowerCase();
+  const valid = VALID_MERMAID_STARTS.some(s => firstWord.startsWith(s));
+  if (!valid) log(`   ⚠ Invalid mermaid start word: "${firstWord}"`);
+  return valid;
+}
+
+// ── Fix 1-5: Preprocess all content sections before rendering ─────────────────
+
+function preprocessSections(sections) {
+  const cleaned = sections.map(sec => {
+    const s = { ...sec };
+
+    // Clean title for every type
+    s.title = cleanSlideText(s.title || '');
+
+    // Fix 3: validate mermaid_code — fall back to bullets if invalid
+    if (s.type === 'diagram' && !isValidMermaidCode(s.mermaid_code)) {
+      log(`   ⚠ Invalid mermaid_code for "${s.title}" — converting to bullets`);
+      s.type = 'bullets';
+    }
+
+    // Clean type-specific fields
+    switch (s.type) {
+      case 'bullets':
+        s.bullets = (s.bullets || [])
+          .map(b => cleanSlideText(b))
+          .filter(b => b.length > 0);
+        if (s.stat) s.stat = cleanSlideText(s.stat);
+        break;
+      case 'stats':
+        if (s.stat_label)   s.stat_label   = cleanSlideText(s.stat_label);
+        if (s.stat_context) s.stat_context = cleanSlideText(s.stat_context);
+        break;
+      case 'quote':
+        s.quote_text   = cleanSlideText(s.quote_text   || '');
+        s.quote_author = cleanSlideText(s.quote_author || '');
+        break;
+    }
+
+    return s;
+  });
+
+  // Fix 5: skip slides that are empty after cleaning
+  return cleaned.filter(s => {
+    if (!s.title) {
+      log(`   ⏭ Skipping slide with empty title`);
+      return false;
+    }
+    if (s.type === 'bullets' && (s.bullets || []).length < 2) {
+      log(`   ⏭ Skipping empty slide for section: "${s.title}"`);
+      return false;
+    }
+    return true;
+  });
+}
+
 // ── Step 1: Split script via Anthropic API ─────────────────────────────────────
 
 async function splitScript(script, topic) {
@@ -274,7 +384,20 @@ Rules:
 - code: syntactically correct snippet; code_language lowercase (javascript/python/bash/etc.)
 - stats: stat_number includes unit/symbol (%, x, M, K); stat_context is one short attribution sentence
 - quote: concise and impactful; real attribution in quote_author
-- duration_seconds proportional to script length (total ≈ script read at 130 wpm)`,
+- duration_seconds proportional to script length (total ≈ script read at 130 wpm)
+
+IMPORTANT RULES FOR DIAGRAMS:
+- If you choose type "diagram" you MUST provide actual valid Mermaid.js code in mermaid_code
+- NEVER use placeholder text like "see diagram", "refer to figure", or "see accompanying material" anywhere
+- If you cannot generate a real self-contained diagram, use type "bullets" instead
+- Every diagram must be fully self-contained and renderable without external context
+- Valid Mermaid example:
+  flowchart LR
+    A[User] --> B[API Gateway]
+    B --> C[Auth Service]
+    B --> D[Data Service]
+    C --> E[Database]
+    D --> E`,
       }],
     },
     {
@@ -351,9 +474,8 @@ async function generateSlides(sections) {
         const fallback = {
           type: 'bullets',
           title: sections[i].title,
-          bullets: sections[i].bullets && sections[i].bullets.length
-            ? sections[i].bullets
-            : ['See diagram in accompanying materials'],
+          // Use pre-cleaned bullets if available; skip placeholder text
+          bullets: (sections[i].bullets || []).filter(b => b && b.length > 0),
         };
         const fallbackHtml = buildSlideHTML(fallback, i, sections.length);
         fs.writeFileSync(path.join(SLIDES_DIR, `slide-${i}.html`), fallbackHtml, 'utf8');
