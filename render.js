@@ -1213,10 +1213,10 @@ async function composite(ffmpeg, ffprobe, sections, heygenPath, outPath) {
 
     execSync(
       `"${ffmpeg}" -y -loop 1 -framerate ${FPS} -i "${png}" ` +
-      `-vf "scale=1280:720,` +
+      `-vf "scale=1280:720:flags=lanczos,` +
            `fade=t=in:st=0:d=${FADE},` +
            `fade=t=out:st=${fadeOutStart}:d=${FADE}" ` +
-      `-t ${dur.toFixed(3)} -c:v libx264 -preset fast -crf 20 -pix_fmt yuv420p "${seg}"`,
+      `-t ${dur.toFixed(3)} -c:v libx264 -preset slow -crf 18 -pix_fmt yuv420p "${seg}"`,
       { stdio: 'pipe' }
     );
     log(`   ✓ seg-${i}.mp4 (${dur.toFixed(1)}s)`);
@@ -1279,19 +1279,19 @@ async function composite(ffmpeg, ffprobe, sections, heygenPath, outPath) {
   // No crop — keep the full body visible.
   // For landscape: scale to PIP_WIDTH wide, auto height.
   const pipScaleFilter = isPortrait
-    ? `[1:v]scale=-2:${PIP_HEIGHT}[av_scaled]`
-    : `[1:v]scale=${PIP_WIDTH}:-2[av_scaled]`;
+    ? `[1:v]scale=-2:${PIP_HEIGHT}:flags=lanczos[av_scaled]`
+    : `[1:v]scale=${PIP_WIDTH}:-2:flags=lanczos[av_scaled]`;
 
   execSync(
     `"${ffmpeg}" -y ` +
     `-i "${slideshowPath}" ` +
     `-i "${heygenPath}" ` +
     `-filter_complex ` +
-      `"[0:v]scale=1280:720[bg];` +
+      `"[0:v]scale=1280:720:flags=lanczos[bg];` +
        `${pipScaleFilter};` +
        `[av_scaled]pad=iw+6:ih+6:3:3:color=white[av_bordered];` +
        `[bg][av_bordered]overlay=${overlayExpr}[outv]" ` +
-    `-c:v libx264 -crf 22 -preset medium -pix_fmt yuv420p ` +
+    `-c:v libx264 -crf 18 -preset slow -pix_fmt yuv420p ` +
     `${audioArgs} ` +
     `"${outPath}"`,
     { stdio: 'pipe' }
