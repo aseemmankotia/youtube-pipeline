@@ -28,7 +28,7 @@ const fs           = require('fs');
 const path         = require('path');
 const axios        = require('axios');
 const puppeteer    = require('puppeteer');
-const { execSync } = require('child_process');
+const { execSync, spawn } = require('child_process');
 
 const INPUT_FILE  = path.join(__dirname, 'render-input.json');
 const SLIDES_DIR  = path.join(__dirname, 'slides');
@@ -502,7 +502,7 @@ async function generateSlides(sections) {
   const ctaPngPath  = path.join(SLIDES_DIR, 'cta-overlay.png');
   if (fs.existsSync(ctaHtmlPath)) {
     const ctaPage = await browser.newPage();
-    await ctaPage.setViewport({ width: 1280, height: 80, deviceScaleFactor: 1 });
+    await ctaPage.setViewport({ width: 940, height: 70, deviceScaleFactor: 1 });
     await ctaPage.goto(`file://${ctaHtmlPath}`, { waitUntil: 'networkidle0', timeout: 15_000 });
     await ctaPage.evaluateHandle('document.fonts.ready');
     await new Promise(r => setTimeout(r, 500));
@@ -510,7 +510,7 @@ async function generateSlides(sections) {
       path: ctaPngPath,
       type: 'png',
       omitBackground: true,
-      clip: { x: 0, y: 0, width: 1280, height: 80 },
+      clip: { x: 0, y: 0, width: 940, height: 70 },
     });
     await ctaPage.close();
     log('   ✓ cta-overlay.png');
@@ -1309,30 +1309,66 @@ async function composite(ffmpeg, ffprobe, sections, heygenPath, outPath) {
   const ctaStart = Math.max(0, totalDuration - 30).toFixed(3);
   const ctaEnd   = Math.max(0, totalDuration - 8).toFixed(3);
 
-  const ctaInput        = hasCta ? `-i "${ctaPngPath}" ` : '';
-  const ctaInputIndex   = 2; // slideshow=0, heygen=1, cta=2
-  const pipOutputLabel  = hasCta ? '[with_pip]' : '[outv]';
-  const ctaFilterChain  = hasCta
-    ? `;[${ctaInputIndex}:v]overlay=0:430:enable='between(t,${ctaStart},${ctaEnd})'[outv]`
-    : '';
+  // Build filter_complex as a clean chain.
+  // When CTA exists: [with_pip][2:v]overlay feeds the PNG into the composite.
+  // The overlay filter requires two pads — background then overlay image.
+  const filterComplex = hasCta
+    ? [
+        `[0:v]scale=1280:720:flags=lanczos[bg]`,
+        `${pipScaleFilter}`,
+        `[av_scaled]pad=iw+6:ih+6:3:3:color=white[av_bordered]`,
+        `[bg][av_bordered]overlay=${overlayExpr}[with_pip]`,
+        `[with_pip][2:v]overlay=0:440:enable='between(t,${ctaStart},${ctaEnd})'[outv]`,
+      ].join(';')
+    : [
+        `[0:v]scale=1280:720:flags=lanczos[bg]`,
+        `${pipScaleFilter}`,
+        `[av_scaled]pad=iw+6:ih+6:3:3:color=white[av_bordered]`,
+        `[bg][av_bordered]overlay=${overlayExpr}[outv]`,
+      ].join(';');
 
-  execSync(
-    `"${ffmpeg}" -y ` +
-    `-i "${slideshowPath}" ` +
-    `-i "${heygenPath}" ` +
-    `${ctaInput}` +
-    `-filter_complex ` +
-      `"[0:v]scale=1280:720:flags=lanczos[bg];` +
-       `${pipScaleFilter};` +
-       `[av_scaled]pad=iw+6:ih+6:3:3:color=white[av_bordered];` +
-       `[bg][av_bordered]overlay=${overlayExpr}${pipOutputLabel}` +
-       `${ctaFilterChain}" ` +
-    `-c:v libx264 -crf 18 -preset slow -pix_fmt yuv420p ` +
-    `${audioArgs} ` +
-    `"${outPath}"`,
-    { stdio: 'pipe' }
-  );
-  log(`   ✓ ${path.basename(outPath)} written (PIP: ${PIP_POSITION}, ${PIP_WIDTH}px wide${hasCta ? ', CTA overlay active' : ''}`);
+  const inputs = [
+    '-i', slideshowPath,
+    '-i', heygenPath,
+    ...(hasCta ? ['-i', ctaPngPath] : []),
+  ];
+
+  const audioMapArgs = hasAudio
+    ? ['-map', '[outv]', '-map', '1:a', '-c:a', 'aac', '-b:a', '192k']
+    : ['-map', '[outv]', '-an'];
+
+  const ffmpegArgs = [
+    '-y',
+    ...inputs,
+    '-filter_complex', filterComplex,
+    '-c:v', 'libx264',
+    '-crf', '18',
+    '-preset', 'slow',
+    '-pix_fmt', 'yuv420p',
+    ...audioMapArgs,
+    outPath,
+  ];
+
+  await new Promise((resolve, reject) => {
+    const proc = spawn(ffmpeg, ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+    proc.stderr.on('data', (data) => {
+      const line = data.toString();
+      if (line.includes('Error') || line.includes('error') || line.includes('time=')) {
+        log(`   FFmpeg: ${line.trim()}`);
+      }
+    });
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        log(`❌ FFmpeg failed with code: ${code}`);
+        log(`   Command: ${ffmpeg} ${ffmpegArgs.join(' ')}`);
+        reject(new Error(`FFmpeg exited with code ${code}`));
+      } else {
+        resolve();
+      }
+    });
+  });
+
+  log(`   ✓ ${path.basename(outPath)} written (PIP: ${PIP_POSITION}${hasCta ? ', CTA overlay active' : ''})`);
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
