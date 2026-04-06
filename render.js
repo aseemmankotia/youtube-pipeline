@@ -99,9 +99,10 @@ async function main() {
     log(`   ⏭ ${beforeCount - contentSections.length} slide(s) skipped after cleanup`);
   }
 
-  // Prepend branded title slide (fixed 4 s)
-  const titleSection = { type: 'title', title: topic, hook, niche, duration_seconds: 4 };
-  const sections = [titleSection, ...contentSections];
+  // Prepend title slide (30 s) + append Thank You slide (8 s)
+  const titleSection   = { type: 'title',    title: topic, hook, niche, duration_seconds: 30 };
+  const thankYouSection = { type: 'thankyou', title: 'Thank You',       duration_seconds: 8  };
+  const sections = [titleSection, ...contentSections, thankYouSection];
 
   // ── Steps 2 & 3: Generate HTML slides + screenshot ──────────────────────────
   log('\n🎨 Steps 2-3 — Generating and screenshotting slides…');
@@ -428,7 +429,7 @@ async function generateSlides(sections) {
   }
 
   // Screenshot with Puppeteer — wait time varies by slide type
-  const WAIT_MS = { title: 800, bullets: 1500, diagram: 3000, code: 1500, stats: 2000, quote: 1000 };
+  const WAIT_MS = { title: 800, bullets: 1500, diagram: 3000, code: 1500, stats: 2000, quote: 1000, thankyou: 800 };
 
   const browser = await puppeteer.launch({ headless: true });
   const page    = await browser.newPage();
@@ -499,56 +500,93 @@ async function generateSlides(sections) {
   await browser.close();
 }
 
-// ── Shared slide helpers ───────────────────────────────────────────────────────
+// ── Brand palette ─────────────────────────────────────────────────────────────
+// TechNuggets by Aseem — deep navy + cyan + gold
 
-// CSS shared across all slide types
+const BRAND_FONT = `https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,400&family=Fira+Code:wght@400;500&display=swap`;
+
+// CSS shared across all content slide types
 const SLIDE_BASE_CSS = `
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
 body{
   width:1280px;height:720px;
-  background:#0f0f0f;
+  background:#0a0e1a;
   font-family:'Inter',system-ui,sans-serif;
   color:#fff;overflow:hidden;position:relative;
 }
 body::before{
   content:'';position:absolute;inset:0;
   background-image:
-    linear-gradient(rgba(255,255,255,.04) 1px,transparent 1px),
-    linear-gradient(90deg,rgba(255,255,255,.04) 1px,transparent 1px);
-  background-size:48px 48px;pointer-events:none;
+    linear-gradient(rgba(0,212,255,.03) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(0,212,255,.03) 1px,transparent 1px);
+  background-size:40px 40px;pointer-events:none;z-index:0;
 }
+body::after{
+  content:'';position:absolute;inset:0;
+  background:
+    linear-gradient(135deg,rgba(0,212,255,.04) 0%,transparent 50%),
+    linear-gradient(315deg,rgba(108,92,231,.04) 0%,transparent 50%);
+  pointer-events:none;z-index:0;
+}
+.top-bar{
+  position:absolute;top:0;left:0;right:0;height:3px;z-index:10;
+  background:linear-gradient(90deg,#00d4ff 0%,#6c5ce7 50%,#f9a825 100%);
+}
+.corner-dot{
+  position:absolute;width:8px;height:8px;border-radius:50%;
+  background:#f9a825;box-shadow:0 0 10px rgba(249,168,37,.6);z-index:10;
+}
+.corner-dot.tl{top:18px;left:18px;}
+.corner-dot.tr{top:18px;right:18px;}
 .content{
   position:absolute;left:0;top:0;
   width:1280px;height:720px;
-  /* padding-bottom:220px keeps content clear of the avatar PIP overlay */
-  padding:56px 80px 220px;
+  padding:50px 60px 230px;
   display:flex;flex-direction:column;
   z-index:1;
 }
-.section-label{
-  font-size:11px;font-weight:700;letter-spacing:5px;
-  color:#ff4444;text-transform:uppercase;margin-bottom:16px;opacity:.85;
+.section-badge{
+  display:inline-flex;align-items:center;gap:8px;
+  background:rgba(0,212,255,.08);border:1px solid rgba(0,212,255,.25);
+  border-radius:20px;padding:4px 14px;
+  font-size:13px;color:#00d4ff;margin-bottom:20px;width:fit-content;
+  letter-spacing:.02em;
+}
+.badge-dot{
+  width:6px;height:6px;border-radius:50%;
+  background:#00d4ff;box-shadow:0 0 8px #00d4ff;flex-shrink:0;
 }
 .title{
-  font-size:52px;font-weight:800;line-height:1.1;
-  color:#fff;margin-bottom:24px;letter-spacing:-1px;
-  max-width:900px;
+  font-size:52px;font-weight:700;line-height:1.15;
+  color:#fff;margin-bottom:16px;max-width:960px;
+  text-shadow:0 0 30px rgba(0,212,255,.15);
+}
+.title-accent{
+  width:60px;height:3px;
+  background:linear-gradient(90deg,#00d4ff,#6c5ce7);
+  border-radius:2px;margin-bottom:20px;
+  box-shadow:0 0 10px rgba(0,212,255,.4);
 }
 .progress{
-  position:absolute;bottom:28px;left:80px;
+  position:absolute;bottom:28px;left:60px;
   display:flex;align-items:center;gap:8px;z-index:2;
 }
-.dot{width:7px;height:7px;border-radius:50%;background:#2a2a2a;}
-.dot.active{width:28px;border-radius:4px;background:#ff4444;}
+.dot{width:7px;height:7px;border-radius:50%;background:#1a3a5c;}
+.dot.active{width:28px;border-radius:4px;background:#00d4ff;box-shadow:0 0 8px rgba(0,212,255,.5);}
 .brand{
   position:absolute;bottom:230px;right:20px;
-  font-size:13px;color:#333;font-weight:500;
-  letter-spacing:0.03em;z-index:3;pointer-events:none;
+  font-size:13px;color:#1a3a5c;font-weight:500;
+  letter-spacing:.05em;z-index:3;pointer-events:none;
+  display:flex;align-items:center;gap:6px;
+}
+.brand-dot{
+  width:6px;height:6px;border-radius:50%;
+  background:#f9a825;box-shadow:0 0 6px rgba(249,168,37,.6);
 }
 `;
 
 function brandingHtml() {
-  return `<div class="brand"><span style="color:#ff4444;margin-right:5px;">●</span>TechNuggets by Aseem</div>`;
+  return `<div class="brand"><div class="brand-dot"></div>TechNuggets by Aseem</div>`;
 }
 
 function progressDots(index, total) {
@@ -558,20 +596,21 @@ function progressDots(index, total) {
 }
 
 function sectionLabel(index, total, type) {
-  const labels = { bullets:'OVERVIEW', diagram:'DIAGRAM', code:'CODE', stats:'STATS', quote:'INSIGHT' };
-  return `<div class="section-label">Section ${index + 1} of ${total} · ${labels[type] || type.toUpperCase()}</div>`;
+  const labels = { bullets:'OVERVIEW', diagram:'ARCHITECTURE', code:'CODE', stats:'BY THE NUMBERS', quote:'KEY INSIGHT', thankyou:'WRAP UP' };
+  return `<div class="section-badge"><div class="badge-dot"></div>Section ${index + 1} of ${total} · ${labels[type] || type.toUpperCase()}</div>`;
 }
 
 // ── Slide type builders ────────────────────────────────────────────────────────
 
 function buildSlideHTML(section, index, total) {
   switch (section.type) {
-    case 'title':   return buildTitleSlide(section);
-    case 'diagram': return buildDiagramSlide(section, index, total);
-    case 'code':    return buildCodeSlide(section, index, total);
-    case 'stats':   return buildStatsSlide(section, index, total);
-    case 'quote':   return buildQuoteSlide(section, index, total);
-    default:        return buildBulletsSlide(section, index, total);
+    case 'title':    return buildTitleSlide(section);
+    case 'thankyou': return buildThankYouSlide();
+    case 'diagram':  return buildDiagramSlide(section, index, total);
+    case 'code':     return buildCodeSlide(section, index, total);
+    case 'stats':    return buildStatsSlide(section, index, total);
+    case 'quote':    return buildQuoteSlide(section, index, total);
+    default:         return buildBulletsSlide(section, index, total);
   }
 }
 
@@ -581,99 +620,145 @@ function buildTitleSlide(section) {
   const hook  = section.hook  ? escHtml(section.hook)  : '';
 
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
-<link href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+<link href="${BRAND_FONT}" rel="stylesheet">
 <style>
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
 body{
   width:1280px;height:720px;
-  background:#0f0f0f;
+  background:radial-gradient(ellipse at center,#0d1b2e 0%,#0a0e1a 60%,#060810 100%);
   font-family:'Inter',system-ui,sans-serif;
   color:#fff;overflow:hidden;position:relative;
 }
-body::before{
-  content:'';position:absolute;inset:0;
+.circuit{
+  position:absolute;inset:0;
   background-image:
-    linear-gradient(rgba(255,255,255,.03) 1px,transparent 1px),
-    linear-gradient(90deg,rgba(255,255,255,.03) 1px,transparent 1px);
-  background-size:48px 48px;pointer-events:none;
+    linear-gradient(rgba(0,212,255,.04) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(0,212,255,.04) 1px,transparent 1px);
+  background-size:40px 40px;pointer-events:none;
 }
+.top-bar{
+  position:absolute;top:0;left:0;right:0;height:3px;
+  background:linear-gradient(90deg,#00d4ff 0%,#6c5ce7 50%,#f9a825 100%);
+}
+.deco-circle{
+  position:absolute;border-radius:50%;border:1px solid;opacity:.12;
+}
+.deco-1{width:320px;height:320px;top:-80px;left:-80px;border-color:#00d4ff;}
+.deco-2{width:220px;height:220px;bottom:-60px;right:-60px;border-color:#6c5ce7;}
+.corner-dot{
+  position:absolute;width:8px;height:8px;border-radius:50%;
+  background:#f9a825;box-shadow:0 0 10px rgba(249,168,37,.6);z-index:10;
+}
+.corner-dot.tl{top:18px;left:18px;}
+.corner-dot.tr{top:18px;right:18px;}
 .center{
   position:absolute;inset:0;
   display:flex;flex-direction:column;align-items:center;justify-content:center;
-  text-align:center;padding:60px 80px;
+  text-align:center;padding:60px 80px;z-index:1;
 }
 .niche-pill{
-  background:#1a1a1a;border:1px solid #333;
-  color:#888;font-size:16px;padding:6px 16px;
-  border-radius:20px;margin-bottom:40px;
-  letter-spacing:0.02em;
+  display:inline-flex;align-items:center;gap:8px;
+  background:rgba(0,212,255,.08);border:1px solid rgba(0,212,255,.25);
+  border-radius:30px;padding:8px 20px;
+  font-size:15px;color:#00d4ff;margin-bottom:28px;
+  letter-spacing:.1em;text-transform:uppercase;
+}
+.niche-dot{
+  width:6px;height:6px;border-radius:50%;
+  background:#00d4ff;box-shadow:0 0 8px #00d4ff;flex-shrink:0;
 }
 .video-title{
-  font-size:64px;font-weight:700;line-height:1.2;
-  color:#ffffff;max-width:900px;text-align:center;
+  font-size:68px;font-weight:800;line-height:1.1;
+  color:#fff;max-width:960px;text-align:center;
+  text-shadow:0 0 60px rgba(0,212,255,.2),0 2px 4px rgba(0,0,0,.5);
 }
-.accent-line{
-  width:80px;height:3px;background:#ff4444;
-  margin:24px auto;border-radius:2px;
+.title-line{
+  width:100px;height:4px;
+  background:linear-gradient(90deg,#00d4ff,#6c5ce7,#f9a825);
+  border-radius:2px;margin:22px auto 20px;
+  box-shadow:0 0 20px rgba(0,212,255,.4);
 }
 .hook-text{
-  font-size:24px;color:#aaaaaa;
-  max-width:700px;text-align:center;font-style:italic;
-  line-height:1.5;
+  font-size:22px;color:#a8c8e8;font-style:italic;
+  max-width:740px;line-height:1.5;
 }
-.brand-bottom-right{
+.brand-name{
+  position:absolute;bottom:36px;left:50%;transform:translateX(-50%);
+  display:flex;align-items:center;gap:10px;
+  font-size:18px;font-weight:600;color:#4a6fa5;letter-spacing:.08em;
+  white-space:nowrap;
+}
+.gold-dot{
+  width:8px;height:8px;border-radius:50%;
+  background:#f9a825;box-shadow:0 0 10px rgba(249,168,37,.7);
+}
+.date-stamp{
   position:absolute;bottom:40px;right:50px;
-  font-size:18px;color:#555;font-weight:500;letter-spacing:0.05em;
-}
-.date-bottom-left{
-  position:absolute;bottom:40px;left:50px;
-  font-size:16px;color:#444;
+  font-size:14px;color:#1a3a5c;
 }
 </style></head><body>
+<div class="circuit"></div>
+<div class="top-bar"></div>
+<div class="deco-circle deco-1"></div>
+<div class="deco-circle deco-2"></div>
+<div class="corner-dot tl"></div>
+<div class="corner-dot tr"></div>
 <div class="center">
-  ${niche ? `<div class="niche-pill">${niche}</div>` : ''}
+  ${niche ? `<div class="niche-pill"><div class="niche-dot"></div>${niche}</div>` : ''}
   <h1 class="video-title">${escHtml(section.title || '')}</h1>
-  <div class="accent-line"></div>
+  <div class="title-line"></div>
   ${hook ? `<p class="hook-text">${hook}</p>` : ''}
 </div>
-<div class="brand-bottom-right">
-  <span style="color:#ff4444;margin-right:8px;">●</span>TechNuggets by Aseem
+<div class="brand-name">
+  <div class="gold-dot"></div>TechNuggets by Aseem<div class="gold-dot"></div>
 </div>
-<div class="date-bottom-left">${date}</div>
+<div class="date-stamp">${date}</div>
 </body></html>`;
 }
 
 function buildBulletsSlide(section, index, total) {
   const bullets = (section.bullets || [])
-    .map((b, i) => `<li style="animation-delay:${(i + 1) * 0.2}s">${escHtml(b)}</li>`)
-    .join('\n    ');
+    .map((b, i) => `
+    <li class="bullet-item" style="animation-delay:${(i + 1) * 0.2}s">
+      <div class="bullet-dot"></div>
+      <span>${escHtml(b)}</span>
+    </li>`)
+    .join('');
   const stat = section.stat
     ? `<div class="stat-callout">${escHtml(section.stat)}</div>` : '';
 
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link href="${BRAND_FONT}" rel="stylesheet">
 <style>
 ${SLIDE_BASE_CSS}
-@keyframes slideIn{from{opacity:0;transform:translateX(-22px)}to{opacity:1;transform:translateX(0)}}
-ul.bullets{list-style:none;margin-bottom:20px;}
-ul.bullets li{
-  font-size:28px;color:#c0c0c0;line-height:1.5;
-  margin-bottom:12px;padding-left:32px;position:relative;
+@keyframes slideIn{from{opacity:0;transform:translateX(-20px)}to{opacity:1;transform:translateX(0)}}
+.bullet-item{
+  display:flex;align-items:flex-start;gap:14px;
+  font-size:28px;color:#a8c8e8;line-height:1.4;
   opacity:0;animation:slideIn 0.4s ease forwards;
+  margin-bottom:16px;
 }
-ul.bullets li::before{content:'—';position:absolute;left:0;color:#ff4444;font-weight:700;}
+.bullet-dot{
+  width:8px;height:8px;border-radius:50%;
+  background:#00d4ff;box-shadow:0 0 8px rgba(0,212,255,.6);
+  flex-shrink:0;margin-top:10px;
+}
 .stat-callout{
-  background:rgba(255,68,68,.09);border-left:3px solid #ff4444;
+  background:rgba(0,212,255,.06);border-left:3px solid #00d4ff;
   padding:14px 20px;border-radius:0 6px 6px 0;
-  font-size:19px;font-weight:600;color:#ff6b6b;font-style:italic;
+  font-size:19px;font-weight:600;color:#00d4ff;font-style:italic;
   line-height:1.45;max-width:820px;
   opacity:0;animation:slideIn 0.4s ease 1s forwards;
 }
 </style></head><body>
+<div class="top-bar"></div>
+<div class="corner-dot tl"></div>
+<div class="corner-dot tr"></div>
 <div class="content">
   ${sectionLabel(index, total, 'bullets')}
   <h1 class="title">${escHtml(section.title)}</h1>
-  <ul class="bullets">${bullets}</ul>
+  <div class="title-accent"></div>
+  <ul style="list-style:none;">${bullets}</ul>
   ${stat}
 </div>
 <div class="progress">${progressDots(index, total)}</div>
@@ -685,7 +770,7 @@ function buildDiagramSlide(section, index, total) {
   const mermaidCode = section.mermaid_code || 'graph LR\n  A[Start] --> B[End]';
 
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link href="${BRAND_FONT}" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 <style>
 ${SLIDE_BASE_CSS}
@@ -695,12 +780,8 @@ ${SLIDE_BASE_CSS}
   display:flex;align-items:center;justify-content:center;
   overflow:hidden;
 }
-.mermaid{
-  max-width:100%;max-height:100%;
-}
-.mermaid svg{
-  display:block;max-width:100%;max-height:100%;
-}
+.mermaid{max-width:100%;max-height:100%;}
+.mermaid svg{display:block;max-width:100%;max-height:100%;}
 </style>
 <script>
 mermaid.initialize({
@@ -708,10 +789,22 @@ mermaid.initialize({
   startOnLoad: true,
   fontSize: 18,
   flowchart: { nodeSpacing: 50, rankSpacing: 60, padding: 20 },
-  themeVariables: { fontSize: '18px', fontFamily: 'Inter, sans-serif' },
+  themeVariables: {
+    fontSize: '18px',
+    fontFamily: 'Inter, sans-serif',
+    primaryColor: '#0f2040',
+    primaryTextColor: '#a8c8e8',
+    primaryBorderColor: '#00d4ff',
+    lineColor: '#00d4ff',
+    secondaryColor: '#0d1b2e',
+    tertiaryColor: '#1a3a5c',
+  },
 });
 </script>
 </head><body>
+<div class="top-bar"></div>
+<div class="corner-dot tl"></div>
+<div class="corner-dot tr"></div>
 <div class="content">
   ${sectionLabel(index, total, 'diagram')}
   <h1 class="title">${escHtml(section.title)}</h1>
@@ -756,32 +849,38 @@ function buildCodeSlide(section, index, total) {
   const escapedCode = colorizeCode(escHtml(truncated.join('\n')));
 
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<link href="${BRAND_FONT}" rel="stylesheet">
 <style>
 ${SLIDE_BASE_CSS}
 .code-outer{position:relative;flex:1;max-width:1060px;}
 .lang-badge{
   position:absolute;top:16px;right:16px;
-  background:#569cd6;color:#fff;
+  background:rgba(0,212,255,.15);border:1px solid rgba(0,212,255,.4);
+  color:#00d4ff;
   padding:4px 12px;border-radius:4px;
   font-size:14px;font-weight:700;letter-spacing:.5px;
   z-index:1;
 }
 pre{
-  background:#1e1e1e;border-radius:8px;
-  padding:30px;margin:0;overflow:auto;
-  border:1px solid #333;
+  background:#0d1b2e;border-radius:8px;
+  padding:28px 30px;margin:0;overflow:hidden;
+  border:1px solid #1a3a5c;
+  border-left:3px solid #00d4ff;
 }
 code{
   font-family:'Fira Code','Courier New',monospace;
-  font-size:22px;line-height:1.6;
-  color:#d4d4d4;white-space:pre;
+  font-size:21px;line-height:1.65;
+  color:#a8c8e8;white-space:pre;
   display:block;
 }
 </style></head><body>
+<div class="top-bar"></div>
+<div class="corner-dot tl"></div>
+<div class="corner-dot tr"></div>
 <div class="content">
   ${sectionLabel(index, total, 'code')}
   <h1 class="title">${escHtml(section.title)}</h1>
+  <div class="title-accent"></div>
   <div class="code-outer">
     <div class="lang-badge">${escHtml(lang.toUpperCase())}</div>
     <pre><code>${escapedCode}</code></pre>
@@ -825,28 +924,33 @@ function buildStatsSlide(section, index, total) {
     : escHtml(statNum);
 
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+<link href="${BRAND_FONT}" rel="stylesheet">
 <style>
 ${SLIDE_BASE_CSS}
 @keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
 .stat-number{
   font-size:140px;font-weight:900;line-height:1;
-  color:#ff4444;letter-spacing:-4px;margin-bottom:14px;
+  color:#00d4ff;letter-spacing:-4px;margin-bottom:14px;
   font-variant-numeric:tabular-nums;
+  text-shadow:0 0 40px rgba(0,212,255,.5);
 }
 .stat-label{
-  font-size:32px;font-weight:600;color:#e8e8e8;
+  font-size:32px;font-weight:600;color:#a8c8e8;
   max-width:780px;line-height:1.3;margin-bottom:12px;
   animation:fadeUp 0.5s ease 0.6s both;
 }
 .stat-context{
-  font-size:17px;color:#555;max-width:640px;line-height:1.5;
+  font-size:17px;color:#4a6fa5;max-width:640px;line-height:1.5;
   animation:fadeUp 0.5s ease 1s both;
 }
 </style></head><body>
+<div class="top-bar"></div>
+<div class="corner-dot tl"></div>
+<div class="corner-dot tr"></div>
 <div class="content">
   ${sectionLabel(index, total, 'stats')}
   <h1 class="title">${escHtml(section.title)}</h1>
+  <div class="title-accent"></div>
   <div class="stat-number" id="stat-num">${startDisplay}</div>
   <div class="stat-label">${escHtml(label)}</div>
   ${context ? `<div class="stat-context">${escHtml(context)}</div>` : ''}
@@ -862,10 +966,10 @@ function buildQuoteSlide(section, index, total) {
   const author = section.quote_author || '';
 
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
-<link href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,600;0,700;0,800;1,400;1,600&display=swap" rel="stylesheet">
+<link href="${BRAND_FONT}" rel="stylesheet">
 <style>
 ${SLIDE_BASE_CSS}
-body{background:linear-gradient(135deg,#0f0f0f 0%,#1a0808 100%);}
+body{background:radial-gradient(ellipse at 30% 50%,#0d1b2e 0%,#0a0e1a 70%);}
 @keyframes fadeIn{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
 .quote-wrap{
   flex:1;display:flex;flex-direction:column;justify-content:center;
@@ -873,17 +977,20 @@ body{background:linear-gradient(135deg,#0f0f0f 0%,#1a0808 100%);}
 }
 .quote-mark{
   font-size:110px;line-height:.65;font-family:Georgia,serif;
-  color:#ff4444;opacity:.35;margin-bottom:6px;display:block;
+  color:rgba(0,212,255,.2);margin-bottom:6px;display:block;
 }
 .quote-text{
-  font-size:40px;font-style:italic;font-weight:600;
+  font-size:38px;font-style:italic;font-weight:600;
   line-height:1.45;color:#e8e8e8;margin-bottom:28px;max-width:840px;
 }
 .quote-author{
-  font-size:19px;font-weight:700;color:#ff4444;letter-spacing:.5px;
+  font-size:19px;font-weight:700;color:#00d4ff;letter-spacing:.5px;
 }
 .quote-author::before{content:'— ';}
 </style></head><body>
+<div class="top-bar"></div>
+<div class="corner-dot tl"></div>
+<div class="corner-dot tr"></div>
 <div class="content">
   ${sectionLabel(index, total, 'quote')}
   <div class="quote-wrap">
@@ -894,6 +1001,110 @@ body{background:linear-gradient(135deg,#0f0f0f 0%,#1a0808 100%);}
 </div>
 <div class="progress">${progressDots(index, total)}</div>
 ${brandingHtml()}
+</body></html>`;
+}
+
+// ── Part 4: Thank You slide ────────────────────────────────────────────────────
+
+function buildThankYouSlide() {
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<link href="${BRAND_FONT}" rel="stylesheet">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+body{
+  width:1280px;height:720px;
+  background:radial-gradient(ellipse at center,#0d1b2e 0%,#0a0e1a 60%,#060810 100%);
+  font-family:'Inter',system-ui,sans-serif;
+  color:#fff;overflow:hidden;position:relative;
+}
+.circuit{
+  position:absolute;inset:0;
+  background-image:
+    linear-gradient(rgba(0,212,255,.04) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(0,212,255,.04) 1px,transparent 1px);
+  background-size:40px 40px;pointer-events:none;
+}
+.top-bar{
+  position:absolute;top:0;left:0;right:0;height:3px;
+  background:linear-gradient(90deg,#00d4ff 0%,#6c5ce7 50%,#f9a825 100%);
+}
+.corner-dot{
+  position:absolute;width:8px;height:8px;border-radius:50%;
+  background:#f9a825;box-shadow:0 0 10px rgba(249,168,37,.6);z-index:10;
+}
+.corner-dot.tl{top:18px;left:18px;}
+.corner-dot.tr{top:18px;right:18px;}
+.center{
+  position:absolute;inset:0;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  text-align:center;z-index:1;padding:60px;
+}
+@keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+.thanks-label{
+  font-size:14px;font-weight:700;letter-spacing:.3em;
+  color:#00d4ff;text-transform:uppercase;margin-bottom:20px;
+  animation:fadeUp .5s ease .1s both;
+}
+.thanks-title{
+  font-size:88px;font-weight:800;
+  background:linear-gradient(135deg,#ffffff 0%,#a8c8e8 50%,#00d4ff 100%);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  background-clip:text;
+  margin-bottom:12px;
+  animation:fadeUp .5s ease .25s both;
+  text-shadow:none;
+}
+.thanks-sub{
+  font-size:22px;color:#4a6fa5;margin-bottom:36px;
+  animation:fadeUp .5s ease .4s both;
+}
+.action-row{
+  display:flex;gap:28px;align-items:center;justify-content:center;
+  animation:fadeUp .5s ease .55s both;
+}
+.action-pill{
+  display:flex;align-items:center;gap:10px;
+  background:rgba(0,212,255,.08);border:1px solid rgba(0,212,255,.25);
+  border-radius:30px;padding:10px 22px;
+  font-size:18px;color:#a8c8e8;
+}
+.action-icon{font-size:22px;}
+.title-line{
+  width:80px;height:3px;
+  background:linear-gradient(90deg,#00d4ff,#6c5ce7,#f9a825);
+  border-radius:2px;margin:0 auto 28px;
+  box-shadow:0 0 20px rgba(0,212,255,.4);
+  animation:fadeUp .5s ease .2s both;
+}
+.brand-name{
+  position:absolute;bottom:36px;left:50%;transform:translateX(-50%);
+  display:flex;align-items:center;gap:10px;
+  font-size:18px;font-weight:600;color:#4a6fa5;letter-spacing:.08em;
+  white-space:nowrap;
+}
+.gold-dot{
+  width:8px;height:8px;border-radius:50%;
+  background:#f9a825;box-shadow:0 0 10px rgba(249,168,37,.7);
+}
+</style></head><body>
+<div class="circuit"></div>
+<div class="top-bar"></div>
+<div class="corner-dot tl"></div>
+<div class="corner-dot tr"></div>
+<div class="center">
+  <div class="thanks-label">That's a wrap</div>
+  <div class="thanks-title">Thank You</div>
+  <div class="title-line"></div>
+  <div class="thanks-sub">If this helped you, the like button is right there 👇</div>
+  <div class="action-row">
+    <div class="action-pill"><span class="action-icon">👍</span> Like</div>
+    <div class="action-pill"><span class="action-icon">🔔</span> Subscribe</div>
+    <div class="action-pill"><span class="action-icon">💬</span> Comment</div>
+  </div>
+</div>
+<div class="brand-name">
+  <div class="gold-dot"></div>TechNuggets by Aseem<div class="gold-dot"></div>
+</div>
 </body></html>`;
 }
 
@@ -972,12 +1183,15 @@ function hasAudioStream(ffprobe, videoPath) {
 }
 
 function distributeDurations(sections, totalDuration) {
-  const TITLE_DUR = 4; // title slide always exactly 4 s
-  const content   = sections.filter(s => s.type !== 'title');
-  const remaining = totalDuration - TITLE_DUR;
-  const sum       = content.reduce((a, s) => a + (s.duration_seconds || 30), 0);
+  const TITLE_DUR  = 30; // title slide: 30 s
+  const THANKS_DUR = 8;  // thank you slide: 8 s
+  const locked     = TITLE_DUR + THANKS_DUR;
+  const content    = sections.filter(s => s.type !== 'title' && s.type !== 'thankyou');
+  const remaining  = Math.max(totalDuration - locked, content.length * 1.5);
+  const sum        = content.reduce((a, s) => a + (s.duration_seconds || 30), 0);
   return sections.map(s => {
-    if (s.type === 'title') return { ...s, duration: TITLE_DUR };
+    if (s.type === 'title')    return { ...s, duration: TITLE_DUR };
+    if (s.type === 'thankyou') return { ...s, duration: THANKS_DUR };
     return { ...s, duration: Math.max(((s.duration_seconds || 30) / sum) * remaining, 1.5) };
   });
 }
