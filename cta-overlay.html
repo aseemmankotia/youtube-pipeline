@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@600;700&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+html,body{
+  width:1280px;height:80px;
+  background:transparent;
+  font-family:'Inter',system-ui,sans-serif;
+  overflow:hidden;
+}
+.bar{
+  width:1280px;height:80px;
+  background:rgba(0,0,0,0.7);
+  border-top:1px solid rgba(0,212,255,0.3);
+  display:flex;align-items:center;justify-content:center;gap:52px;
+}
+.item{
+  display:flex;align-items:center;gap:10px;
+  font-size:28px;font-weight:600;color:#fff;
+  letter-spacing:0.01em;
+}
+.icon{color:#00d4ff;}
+.sep{color:rgba(0,212,255,0.35);font-size:22px;font-weight:400;}
+</style>
+</head>
+<body>
+<div class="bar">
+  <div class="item"><span class="icon">👍</span> Like</div>
+  <div class="sep">•</div>
+  <div class="item"><span class="icon">🔔</span> Subscribe</div>
+  <div class="sep">•</div>
+  <div class="item"><span class="icon">↗</span> Share</div>
+</div>
+</body>
+</html>

@@ -497,6 +497,25 @@ async function generateSlides(sections) {
     log(`   ✓ slide-${i}.png (${sections[i].type || 'bullets'})`);
   }
 
+  // Screenshot CTA overlay (1280×80, deviceScaleFactor:1, transparent bg)
+  const ctaHtmlPath = path.join(__dirname, 'cta-overlay.html');
+  const ctaPngPath  = path.join(SLIDES_DIR, 'cta-overlay.png');
+  if (fs.existsSync(ctaHtmlPath)) {
+    const ctaPage = await browser.newPage();
+    await ctaPage.setViewport({ width: 1280, height: 80, deviceScaleFactor: 1 });
+    await ctaPage.goto(`file://${ctaHtmlPath}`, { waitUntil: 'networkidle0', timeout: 15_000 });
+    await ctaPage.evaluateHandle('document.fonts.ready');
+    await new Promise(r => setTimeout(r, 500));
+    await ctaPage.screenshot({
+      path: ctaPngPath,
+      type: 'png',
+      omitBackground: true,
+      clip: { x: 0, y: 0, width: 1280, height: 80 },
+    });
+    await ctaPage.close();
+    log('   ✓ cta-overlay.png');
+  }
+
   await browser.close();
 }
 
@@ -1201,6 +1220,7 @@ function distributeDurations(sections, totalDuration) {
 async function composite(ffmpeg, ffprobe, sections, heygenPath, outPath) {
   const FPS  = 30;
   const FADE = 0.5;
+  const totalDuration = sections.reduce((sum, s) => sum + s.duration, 0);
 
   // 6a. Convert each slide PNG → short MP4 with fade-in/fade-out
   const segPaths = [];
@@ -1282,21 +1302,37 @@ async function composite(ffmpeg, ffprobe, sections, heygenPath, outPath) {
     ? `[1:v]scale=-2:${PIP_HEIGHT}:flags=lanczos[av_scaled]`
     : `[1:v]scale=${PIP_WIDTH}:-2:flags=lanczos[av_scaled]`;
 
+  const ctaPngPath = path.join(SLIDES_DIR, 'cta-overlay.png');
+  const hasCta     = fs.existsSync(ctaPngPath);
+
+  // CTA bar: appears 30s before end, disappears when Thank You slide starts (last 8s)
+  const ctaStart = Math.max(0, totalDuration - 30).toFixed(3);
+  const ctaEnd   = Math.max(0, totalDuration - 8).toFixed(3);
+
+  const ctaInput        = hasCta ? `-i "${ctaPngPath}" ` : '';
+  const ctaInputIndex   = 2; // slideshow=0, heygen=1, cta=2
+  const pipOutputLabel  = hasCta ? '[with_pip]' : '[outv]';
+  const ctaFilterChain  = hasCta
+    ? `;[${ctaInputIndex}:v]overlay=0:430:enable='between(t,${ctaStart},${ctaEnd})'[outv]`
+    : '';
+
   execSync(
     `"${ffmpeg}" -y ` +
     `-i "${slideshowPath}" ` +
     `-i "${heygenPath}" ` +
+    `${ctaInput}` +
     `-filter_complex ` +
       `"[0:v]scale=1280:720:flags=lanczos[bg];` +
        `${pipScaleFilter};` +
        `[av_scaled]pad=iw+6:ih+6:3:3:color=white[av_bordered];` +
-       `[bg][av_bordered]overlay=${overlayExpr}[outv]" ` +
+       `[bg][av_bordered]overlay=${overlayExpr}${pipOutputLabel}` +
+       `${ctaFilterChain}" ` +
     `-c:v libx264 -crf 18 -preset slow -pix_fmt yuv420p ` +
     `${audioArgs} ` +
     `"${outPath}"`,
     { stdio: 'pipe' }
   );
-  log(`   ✓ ${path.basename(outPath)} written (PIP: ${PIP_POSITION}, ${PIP_WIDTH}px wide)`);
+  log(`   ✓ ${path.basename(outPath)} written (PIP: ${PIP_POSITION}, ${PIP_WIDTH}px wide${hasCta ? ', CTA overlay active' : ''}`);
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
