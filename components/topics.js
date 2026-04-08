@@ -16,12 +16,16 @@ const NICHES = [
   'Crypto & Web3', 'Science', 'Business & Entrepreneurship',
 ];
 
-const CACHE_TTL    = 24 * 60 * 60 * 1000; // 24 hours
+const CACHE_TTL    = 6 * 60 * 60 * 1000; // 6 hours — stale topics risk
 const CACHE_PREFIX = 'topics_cache_';
 
 // ── Cache helpers ─────────────────────────────────────────────────────────────
 
-function cacheKey(niche)  { return CACHE_PREFIX + niche; }
+// Include today's date in the key so yesterday's results are never served today.
+function cacheKey(niche) {
+  const dateKey = new Date().toISOString().split('T')[0]; // "2026-04-08"
+  return `${CACHE_PREFIX}${niche}_${dateKey}`;
+}
 
 function loadCache(niche) {
   try {
@@ -104,10 +108,20 @@ export function renderTopics(container, onTopicSelect) {
       <button class="btn btn-primary" id="fetch-topics-btn">
         <span>Search Trends</span>
       </button>
+      <button class="btn btn-secondary" id="refresh-topics-btn"
+        style="font-size:0.85rem;padding:6px 14px;" title="Run a second search with different queries for more variety">
+        🔄 Refresh results
+      </button>
       <button class="btn btn-secondary" id="clear-cache-btn"
         style="font-size:0.78rem;padding:5px 12px;">
         🗑 Clear all cached topics
       </button>
+      <style>
+        .topic-freshness{display:flex;align-items:center;gap:6px;margin-top:5px;flex-wrap:wrap;}
+        .fresh-badge{font-size:11px;background:rgba(0,212,255,.1);border:1px solid rgba(0,212,255,.2);
+          color:#00d4ff;padding:2px 8px;border-radius:10px;}
+        .source-hint{font-size:11px;color:#4a6fa5;font-style:italic;}
+      </style>
       <div id="topics-status"></div>
       <div id="cache-savings-display" style="font-size:0.8rem;color:#7af57a;margin-top:8px;display:none;"></div>
     </div>
@@ -121,7 +135,10 @@ export function renderTopics(container, onTopicSelect) {
   updateCacheSavingsDisplay(container);
 
   container.querySelector('#fetch-topics-btn')
-    .addEventListener('click', () => fetchTopics(container, onTopicSelect, false));
+    .addEventListener('click', () => fetchTopics(container, onTopicSelect, false, 'primary'));
+
+  container.querySelector('#refresh-topics-btn')
+    .addEventListener('click', () => fetchTopics(container, onTopicSelect, true, 'secondary'));
 
   container.querySelector('#clear-cache-btn')
     .addEventListener('click', () => {
@@ -159,7 +176,7 @@ function updateCacheSavingsDisplay(container) {
 
 // ── Fetch (cache-aware) ───────────────────────────────────────────────────────
 
-async function fetchTopics(container, onTopicSelect, forceRefresh) {
+async function fetchTopics(container, onTopicSelect, forceRefresh, queryMode = 'primary') {
   const nicheSelect = container.querySelector('#niche-select').value;
   const customNiche = container.querySelector('#custom-niche').value.trim();
   // Strip the ⚡ marker that may have been added to the option text
@@ -209,7 +226,7 @@ async function fetchTopics(container, onTopicSelect, forceRefresh) {
   resultsEl.innerHTML = '';
 
   try {
-    const { topics, inputTokens, outputTokens } = await liveSearch(niche, statusEl);
+    const { topics, inputTokens, outputTokens } = await liveSearch(niche, statusEl, queryMode);
 
     // Cache result
     saveCache(niche, topics);
@@ -221,7 +238,7 @@ async function fetchTopics(container, onTopicSelect, forceRefresh) {
     statusEl.innerHTML = `
       <div class="status-bar success">
         🔍 Live search complete · Showing top ${topics.length} topics for
-        <strong>${escHtml(niche)}</strong> · Results cached for 24 hours
+        <strong>${escHtml(niche)}</strong> · Results cached for 6 hours
       </div>`;
 
     renderTopicCards(resultsEl, topics, niche, onTopicSelect);
@@ -258,13 +275,89 @@ async function showCountdown(statusEl, seconds) {
   }
 }
 
+// ── Fix 3: filter out topics referencing content older than 90 days ───────────
+
+function filterRecentTopics(topics) {
+  const currentYear = new Date().getFullYear();
+  const lastYear    = currentYear - 1;
+  return topics.filter(topic => {
+    const text = `${topic.title} ${topic.desc}`.toLowerCase();
+    const oldPatterns = [
+      `in ${lastYear}`, `of ${lastYear}`, `${lastYear} study`,
+      `${lastYear} report`, `since ${lastYear}`, `back in ${lastYear}`,
+    ];
+    const isOld = oldPatterns.some(p => text.includes(p));
+    if (isOld) console.log('[topics] filtered stale topic:', topic.title);
+    return !isOld;
+  });
+}
+
 // ── Claude live search ────────────────────────────────────────────────────────
 
-async function liveSearch(niche, statusEl) {
+async function liveSearch(niche, statusEl, queryMode = 'primary') {
   const { claudeApiKey } = getSettings();
   if (!claudeApiKey) {
     throw new Error('Anthropic API key missing — add it in ⚙ Settings to fetch live topics.');
   }
+
+  // Fix 1 & 6: date-aware queries; secondary set used by "Refresh results"
+  const today         = new Date();
+  const ninetyDaysAgo = new Date(today - 90 * 24 * 60 * 60 * 1000);
+  const dateStr       = today.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const cutoffStr     = ninetyDaysAgo.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const monthYear     = today.toLocaleString('en-US', { month: 'long' }) + ' ' + today.getFullYear();
+
+  const primaryQueries = [
+    `${niche} news ${today.getFullYear()}`,
+    `${niche} trends last 30 days`,
+    `${niche} latest developments ${monthYear}`,
+    `${niche} viral topics this week`,
+  ];
+  const secondaryQueries = [
+    `${niche} breaking news today`,
+    `latest ${niche} announcements ${dateStr}`,
+    `${niche} community discussion this week`,
+  ];
+  const queries = queryMode === 'secondary' ? secondaryQueries : primaryQueries;
+
+  // Fix 2: strict recency system prompt
+  const system =
+    `You are a YouTube content strategist helping find trending tech topics RIGHT NOW in ${today.getFullYear()}.
+
+Today's date is ${dateStr}.
+
+CRITICAL RULES:
+1. You MUST use the web_search tool to find current topics
+2. ONLY return topics that have recent web search results from the last 90 days (after ${cutoffStr})
+3. NEVER suggest topics based on your training data alone
+4. If web search returns no recent results for a niche, say so rather than inventing topics
+5. Each topic must be something actively discussed online RIGHT NOW — not something from ${today.getFullYear() - 1} or earlier
+6. Verify each topic has recent sources before including it
+
+Quality check before returning each topic:
+- Did web search return results from last 90 days? If no → exclude
+- Is there a specific recent event driving interest? If no → exclude
+- Would someone searching this week find fresh content? If no → exclude
+
+Return ONLY a JSON array with no markdown or preamble.
+Each item: {title, summary (1 sentence, include "Trending since [month year]"), tags (3 max), hook (1 sentence), trending_since (e.g. "April 2026"), source_hint (brief trigger for the trend)}`;
+
+  const userMsg =
+    `Today is ${dateStr}.
+
+Search the web for trending topics in: ${niche}
+
+Run these specific searches to find ONLY recent content:
+${queries.map((q, i) => `${i + 1}. "${q}"`).join('\n')}
+
+STRICT RULES:
+- ONLY include topics where you found web search results dated after ${cutoffStr}
+- If a topic's most recent source is older than 90 days, EXCLUDE it completely
+- NEVER use your training data to fill in topics — only use what web search returns
+- Each topic MUST have a specific recent event or development that makes it trending RIGHT NOW
+- Include the approximate date of the trending event in the summary field
+
+Return 20 topics as JSON array with fields: title, summary, tags, hook, trending_since, source_hint`;
 
   const res = await fetchWithRetry(
     'https://api.anthropic.com/v1/messages',
@@ -274,17 +367,15 @@ async function liveSearch(niche, statusEl) {
         'Content-Type': 'application/json',
         'x-api-key': claudeApiKey,
         'anthropic-version': '2023-06-01',
+        'anthropic-beta': 'web-search-2025-03-05',
         'anthropic-dangerous-direct-browser-access': 'true',
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 2000,
+        max_tokens: 4000,
         tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-        system: `You are a YouTube content strategist. Use web search to find 20 trending topics this week in the given niche. Return ONLY a JSON array with no markdown or preamble. Each item: {title, summary (1 sentence), tags (3 max), hook (1 sentence)}`,
-        messages: [{
-          role: 'user',
-          content: `Find the top 20 trending topics this week for a YouTube channel about: ${niche}. Search recent news, discussions, and viral content. Return only the JSON array.`,
-        }],
+        system,
+        messages: [{ role: 'user', content: userMsg }],
       }),
     },
     statusEl
@@ -298,7 +389,6 @@ async function liveSearch(niche, statusEl) {
 
   const data = await res.json();
 
-  // Extract token usage
   const inputTokens  = data.usage?.input_tokens  || 0;
   const outputTokens = data.usage?.output_tokens || 0;
 
@@ -307,10 +397,10 @@ async function liveSearch(niche, statusEl) {
     textPreview: b.type === 'text' ? b.text?.slice(0, 120) : undefined,
   })));
 
+  // Join all text blocks (Claude may split response across multiple when using tools)
   const textBlocks = (data.content || []).filter(b => b.type === 'text');
   if (!textBlocks.length) throw new Error('No text response from Claude. Please try again.');
-
-  const fullText = textBlocks[textBlocks.length - 1].text || '';
+  const fullText = textBlocks.map(b => b.text).join('\n\n');
 
   let parsed;
   try {
@@ -327,13 +417,18 @@ async function liveSearch(niche, statusEl) {
     throw new Error('Invalid topics format returned. Please try again.');
   }
 
-  const topics = parsed.map(item => ({
-    title: String(item.title || '').trim(),
-    desc:  String(item.summary || item.desc || '').trim(),
-    trend: (item.tags && item.tags[0]) ? String(item.tags[0]) : 'Trending',
-    hook:  String(item.hook || '').trim(),
-    tags:  Array.isArray(item.tags) ? item.tags : [],
+  const mapped = parsed.map(item => ({
+    title:         String(item.title        || '').trim(),
+    desc:          String(item.summary      || item.desc || '').trim(),
+    trend:         (item.tags && item.tags[0]) ? String(item.tags[0]) : 'Trending',
+    hook:          String(item.hook         || '').trim(),
+    tags:          Array.isArray(item.tags) ? item.tags : [],
+    trending_since: String(item.trending_since || '').trim(),
+    source_hint:   String(item.source_hint  || '').trim(),
   })).filter(t => t.title);
+
+  // Fix 3: drop any topics that reference content clearly older than 90 days
+  const topics = filterRecentTopics(mapped);
 
   return { topics, inputTokens, outputTokens };
 }
@@ -385,12 +480,18 @@ function renderTopicCards(container, topics, niche, onTopicSelect) {
 }
 
 function topicCardHtml(t, i) {
+  const freshnessHtml = (t.trending_since || t.source_hint) ? `
+    <div class="topic-freshness">
+      ${t.trending_since ? `<span class="fresh-badge">🔥 ${escHtml(t.trending_since)}</span>` : ''}
+      ${t.source_hint    ? `<span class="source-hint">${escHtml(t.source_hint)}</span>`        : ''}
+    </div>` : '';
   return `
     <div class="topic-item" data-index="${i}">
       <span class="topic-number">${i + 1}</span>
       <div class="topic-content">
         <div class="topic-title">${escHtml(t.title)}</div>
         <div class="topic-desc">${escHtml(t.desc)}</div>
+        ${freshnessHtml}
       </div>
       <span class="topic-badge">${escHtml(t.trend)}</span>
     </div>
