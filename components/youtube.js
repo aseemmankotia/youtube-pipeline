@@ -300,6 +300,10 @@ async function startUpload(container) {
     statusEl.innerHTML = infoBar('Refreshing access token…');
     const accessToken = await refreshAccessToken({ clientId, clientSecret, refreshToken });
 
+    statusEl.innerHTML = infoBar('Validating YouTube connection…');
+    const tokenOk = await validateYouTubeToken(accessToken);
+    if (!tokenOk) throw new Error('TOKEN_EXPIRED');
+
     // Step 1: Download the actual video binary from HeyGen.
     // We read the Content-Type from the response so YouTube receives the
     // correct MIME type — avoids "Processing abandoned" when HeyGen serves
@@ -336,7 +340,11 @@ async function startUpload(container) {
     }));
 
   } catch (err) {
-    statusEl.innerHTML = errBar(esc(err.message));
+    if (err.message === 'TOKEN_EXPIRED') {
+      statusEl.innerHTML = tokenExpiredBar();
+    } else {
+      statusEl.innerHTML = errBar(esc(err.message));
+    }
     retryBtn.style.display = 'inline-flex';
   } finally {
     btn.disabled = false;
@@ -357,9 +365,23 @@ async function refreshAccessToken({ clientId, clientSecret, refreshToken }) {
   });
   const data = await res.json();
   if (!res.ok || data.error) {
+    const desc = (data.error_description || '').toLowerCase();
+    if (data.error === 'invalid_grant' || desc.includes('expired') || desc.includes('revoked')) {
+      throw new Error('TOKEN_EXPIRED');
+    }
     throw new Error(`Token refresh failed: ${data.error_description || data.error || res.statusText}`);
   }
   return data.access_token;
+}
+
+async function validateYouTubeToken(accessToken) {
+  try {
+    const resp = await fetch(
+      'https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true',
+      { headers: { 'Authorization': `Bearer ${accessToken}` } }
+    );
+    return resp.ok;
+  } catch { return false; }
 }
 
 async function fetchVideoBlob(videoUrl) {
@@ -447,6 +469,23 @@ async function uploadInChunks({ uploadUrl, videoBlob, mimeType, container }) {
 const errBar     = (msg) => `<div class="status-bar error">${msg}</div>`;
 const infoBar    = (msg) => `<div class="status-bar info">${msg}</div>`;
 const successBar = (msg) => `<div class="status-bar success">${msg}</div>`;
+
+function tokenExpiredBar() {
+  const steps = [
+    'Open Terminal',
+    'Run: <code style="user-select:all;background:rgba(0,0,0,.15);padding:1px 5px;border-radius:3px;">cd ~/youtube-pipeline &amp;&amp; node youtube-auth.js</code>',
+    'Log in with Google when the browser opens',
+    'Run: <code style="user-select:all;background:rgba(0,0,0,.15);padding:1px 5px;border-radius:3px;">cat ~/youtube-pipeline/youtube-token.json</code>',
+    'Copy the <strong>refresh_token</strong> value',
+    'Paste it in <strong>⚙ Settings → YouTube Refresh Token</strong>',
+    'Try uploading again',
+  ].map((s, i) => `<li style="margin:4px 0;">${i + 1}. ${s}</li>`).join('');
+  return `
+    <div class="status-bar error" style="display:block;line-height:1.6;">
+      <strong>⚠️ YouTube token expired or revoked.</strong> To fix:
+      <ul style="margin:8px 0 4px;padding-left:0;list-style:none;">${steps}</ul>
+    </div>`;
+}
 const mb         = (bytes) => (bytes / 1024 / 1024).toFixed(1);
 
 function esc(str) {

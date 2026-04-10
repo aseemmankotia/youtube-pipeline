@@ -73,6 +73,11 @@ export function renderSettings(container) {
         <textarea id="sg-yt-token" rows="3"
           placeholder="1//01… (run: node youtube-auth.js)"
           style="font-size:0.8rem;">${esc(s.ytRefreshToken)}</textarea>
+        ${tokenAgeHtml()}
+      </div>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:8px;">
+        <button class="btn btn-secondary" id="sg-yt-test-btn">🔗 Test YouTube connection</button>
+        <span id="sg-yt-test-status" style="font-size:0.85rem;color:var(--muted);"></span>
       </div>
     </div>
 
@@ -211,6 +216,62 @@ export function renderSettings(container) {
     });
   });
 
+  // Test YouTube connection button
+  container.querySelector('#sg-yt-test-btn').addEventListener('click', async () => {
+    const btn      = container.querySelector('#sg-yt-test-btn');
+    const statusEl = container.querySelector('#sg-yt-test-status');
+    btn.disabled   = true;
+    btn.textContent = 'Testing…';
+    statusEl.textContent = '';
+
+    try {
+      const { ytClientId, ytClientSecret, ytRefreshToken } = getSettings();
+      if (!ytClientId || !ytClientSecret || !ytRefreshToken) {
+        throw new Error('Missing credentials — fill in Client ID, Secret, and Refresh Token first.');
+      }
+
+      // Refresh token
+      const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: ytClientId, client_secret: ytClientSecret,
+          refresh_token: ytRefreshToken, grant_type: 'refresh_token',
+        }),
+      });
+      const tokenData = await tokenRes.json();
+      if (!tokenRes.ok || tokenData.error) {
+        const d = (tokenData.error_description || '').toLowerCase();
+        if (tokenData.error === 'invalid_grant' || d.includes('expired') || d.includes('revoked')) {
+          throw new Error('Token expired — re-run node youtube-auth.js and update the token.');
+        }
+        throw new Error(tokenData.error_description || tokenData.error || 'Token refresh failed');
+      }
+
+      // Validate against YouTube API
+      const ytRes = await fetch(
+        'https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true',
+        { headers: { 'Authorization': `Bearer ${tokenData.access_token}` } }
+      );
+      if (!ytRes.ok) throw new Error(`YouTube API returned ${ytRes.status}`);
+
+      btn.textContent    = '✅ Connected!';
+      statusEl.style.color = '#7af57a';
+      statusEl.textContent = 'Token is valid';
+    } catch (e) {
+      btn.textContent    = '❌ Failed';
+      statusEl.style.color = '#f57a7a';
+      statusEl.textContent = e.message;
+    }
+
+    setTimeout(() => {
+      btn.disabled     = false;
+      btn.textContent  = '🔗 Test YouTube connection';
+      statusEl.textContent = '';
+      statusEl.style.color = '';
+    }, 5000);
+  });
+
   // Test email button — dispatches event handled in app.js
   container.querySelector('#sg-test-email-btn').addEventListener('click', async () => {
     const statusEl = container.querySelector('#sg-test-email-status');
@@ -232,12 +293,17 @@ function updateCheck(input) {
 }
 
 function persist(container) {
+  const newToken = container.querySelector('#sg-yt-token').value.trim();
+  const oldToken = getSettings().ytRefreshToken || '';
+  if (newToken && newToken !== oldToken) {
+    localStorage.setItem('yt_token_saved_at', String(Date.now()));
+  }
   saveSettings({
     claudeApiKey:          container.querySelector('#sg-claude-key').value.trim(),
     heygenVoiceId:         container.querySelector('#sg-hg-voice').value.trim(),
     ytClientId:            container.querySelector('#sg-yt-clientid').value.trim(),
     ytClientSecret:        container.querySelector('#sg-yt-secret').value.trim(),
-    ytRefreshToken:        container.querySelector('#sg-yt-token').value.trim(),
+    ytRefreshToken:        newToken,
     sheetsId:              container.querySelector('#sg-sheets-id').value.trim(),
     emailjsServiceId:      container.querySelector('#sg-ejs-service').value.trim(),
     emailjsTemplateId:     container.querySelector('#sg-ejs-template').value.trim(),
@@ -252,6 +318,22 @@ function persist(container) {
     hashnodeApiKey:        container.querySelector('#sg-hashnode-key').value.trim(),
     hashnodePublicationId: container.querySelector('#sg-hashnode-pub').value.trim(),
   });
+}
+
+function tokenAgeHtml() {
+  const raw = localStorage.getItem('yt_token_saved_at');
+  if (!raw) return '';
+  const days = Math.floor((Date.now() - parseInt(raw)) / 86_400_000);
+  if (days >= 180) {
+    return `<p style="font-size:0.8rem;color:#f57a7a;margin-top:5px;">
+      🔴 Token is ${days} days old — re-authenticate recommended</p>`;
+  }
+  if (days >= 150) {
+    return `<p style="font-size:0.8rem;color:#f9a825;margin-top:5px;">
+      ⚠️ Token is ${days} days old — consider re-authenticating</p>`;
+  }
+  return `<p style="font-size:0.8rem;color:var(--muted);margin-top:5px;">
+    Last updated: ${days} day${days === 1 ? '' : 's'} ago</p>`;
 }
 
 function esc(str) {
