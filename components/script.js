@@ -112,6 +112,10 @@ function showToast(container, msg) {
 
 export function renderScript(container) {
   container.innerHTML = `
+    <style>
+      .aud-pill.active   { background: var(--accent) !important; color: #fff !important; border-color: var(--accent) !important; }
+      .depth-pill.active { background: var(--accent) !important; color: #fff !important; border-color: var(--accent) !important; }
+    </style>
     <div class="card">
       <h2>Script Generator</h2>
 
@@ -146,6 +150,91 @@ export function renderScript(container) {
           <label for="script-channel">Channel Name (optional)</label>
           <input type="text" id="script-channel" placeholder="e.g. TechWithAlex" />
         </div>
+      </div>
+
+      <!-- Target Audience -->
+      <div style="margin-bottom:16px;">
+        <label style="display:block;font-size:0.85rem;font-weight:600;color:var(--text);margin-bottom:6px;">
+          Target Audience
+        </label>
+        <div id="audiencePills" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+          ${[
+            ['🌱','complete beginners'],
+            ['👨‍💻','junior developers'],
+            ['⚙️','mid-level engineers'],
+            ['🏆','senior engineers'],
+            ['📊','engineering managers'],
+            ['💼','business professionals'],
+            ['🚀','startup founders'],
+            ['🎓','students'],
+          ].map(([icon, val]) =>
+            `<button class="aud-pill" data-value="${val}" style="padding:6px 14px;border-radius:20px;
+              border:1px solid var(--border);background:var(--surface2);color:var(--muted);
+              font-size:13px;cursor:pointer;transition:all .15s;">
+              ${icon} ${val.replace(/\b\w/g, c => c.toUpperCase())}
+            </button>`
+          ).join('')}
+        </div>
+        <input type="text" id="customAudience"
+          placeholder="Or describe your specific audience…"
+          style="width:100%;font-size:0.85rem;" />
+      </div>
+
+      <!-- Tone Mix sliders -->
+      <div style="margin-bottom:16px;">
+        <label style="display:block;font-size:0.85rem;font-weight:600;color:var(--text);margin-bottom:2px;">
+          Tone Mix
+        </label>
+        <p style="font-size:0.78rem;color:var(--muted);margin-bottom:10px;">
+          Adjust the balance of your script's tone
+        </p>
+        <div style="display:flex;flex-direction:column;gap:12px;">
+          ${[
+            ['technical','🔬 Technical','#185FA5'],
+            ['business', '💼 Business', '#6c5ce7'],
+            ['casual',   '😄 Casual/Fun','#3B6D11'],
+          ].map(([key, label, color]) => `
+            <div style="display:flex;align-items:center;gap:12px;">
+              <span style="font-size:13px;color:var(--muted);width:120px;flex-shrink:0;">${label}</span>
+              <input type="range" id="${key}Slider" min="0" max="100"
+                style="flex:1;height:4px;accent-color:${color};" />
+              <span id="${key}Pct"
+                style="font-size:13px;font-weight:600;color:var(--text);width:36px;
+                  text-align:right;flex-shrink:0;"></span>
+            </div>`
+          ).join('')}
+          <div style="text-align:right;font-size:12px;color:var(--muted);">
+            Total: <span id="toneTotalLabel">100%</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Expertise Depth -->
+      <div style="margin-bottom:16px;">
+        <label style="display:block;font-size:0.85rem;font-weight:600;color:var(--text);margin-bottom:6px;">
+          Technical Depth
+        </label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;" id="depthPills">
+          ${[
+            ['surface','Surface level'],
+            ['practical','Practical'],
+            ['in-depth','★ In-depth'],
+            ['expert','Expert'],
+          ].map(([val, lbl]) =>
+            `<button class="depth-pill" data-value="${val}"
+              style="padding:6px 14px;border-radius:20px;border:1px solid var(--border);
+                background:var(--surface2);color:var(--muted);font-size:13px;cursor:pointer;transition:all .15s;">
+              ${lbl}
+            </button>`
+          ).join('')}
+        </div>
+      </div>
+
+      <!-- Settings summary -->
+      <div id="settings-summary"
+        style="font-size:0.8rem;color:var(--muted);padding:8px 12px;
+          background:var(--surface2);border:1px solid var(--border);
+          border-radius:var(--radius);margin-bottom:12px;line-height:1.5;">
       </div>
 
       <button class="btn btn-primary" id="generate-script-btn">
@@ -343,6 +432,75 @@ export function renderScript(container) {
       detail: { script: container._script, topic },
     }));
   });
+
+  // ── Target Audience pills ──────────────────────────────────────────────────
+  container.querySelectorAll('.aud-pill').forEach(pill => {
+    pill.addEventListener('click', () => {
+      container.querySelectorAll('.aud-pill').forEach(p => p.classList.remove('active'));
+      pill.classList.add('active');
+      container.querySelector('#customAudience').value = '';
+      localStorage.setItem('pipeline_target_audience', pill.dataset.value);
+      updateSummary(container);
+    });
+  });
+
+  container.querySelector('#customAudience').addEventListener('input', () => {
+    const val = container.querySelector('#customAudience').value.trim();
+    if (val) container.querySelectorAll('.aud-pill').forEach(p => p.classList.remove('active'));
+    localStorage.setItem('pipeline_target_audience', val ? `custom:${val}` : '');
+    updateSummary(container);
+  });
+
+  // ── Tone sliders ───────────────────────────────────────────────────────────
+  const toneState = {
+    technical: parseInt(localStorage.getItem('pipeline_tone_technical') ?? '60'),
+    business:  parseInt(localStorage.getItem('pipeline_tone_business')  ?? '25'),
+    casual:    parseInt(localStorage.getItem('pipeline_tone_casual')    ?? '15'),
+  };
+
+  ['technical', 'business', 'casual'].forEach(key => {
+    container.querySelector(`#${key}Slider`).addEventListener('input', e => {
+      updateSliders(container, toneState, key, parseInt(e.target.value));
+      localStorage.setItem('pipeline_tone_technical', toneState.technical);
+      localStorage.setItem('pipeline_tone_business',  toneState.business);
+      localStorage.setItem('pipeline_tone_casual',    toneState.casual);
+      updateSummary(container);
+    });
+  });
+
+  // ── Expertise Depth pills ──────────────────────────────────────────────────
+  container.querySelectorAll('.depth-pill').forEach(pill => {
+    pill.addEventListener('click', () => {
+      container.querySelectorAll('.depth-pill').forEach(p => p.classList.remove('active'));
+      pill.classList.add('active');
+      localStorage.setItem('pipeline_expertise_depth', pill.dataset.value);
+      updateSummary(container);
+    });
+  });
+
+  // ── Init: restore saved values ─────────────────────────────────────────────
+  {
+    const savedAud = localStorage.getItem('pipeline_target_audience') || 'mid-level engineers';
+    if (savedAud.startsWith('custom:')) {
+      container.querySelector('#customAudience').value = savedAud.slice(7);
+    } else {
+      const matching = container.querySelector(`.aud-pill[data-value="${savedAud}"]`);
+      if (matching) {
+        matching.classList.add('active');
+      } else {
+        const def = container.querySelector('.aud-pill[data-value="mid-level engineers"]');
+        if (def) def.classList.add('active');
+      }
+    }
+
+    applySliderValues(container, toneState);
+
+    const savedDepth = localStorage.getItem('pipeline_expertise_depth') || 'in-depth';
+    const depthPill  = container.querySelector(`.depth-pill[data-value="${savedDepth}"]`);
+    if (depthPill) depthPill.classList.add('active');
+  }
+
+  updateSummary(container);
 }
 
 // ── Sources display ───────────────────────────────────────────────────────────
@@ -372,6 +530,9 @@ async function generateScript(container) {
   const style   = container.querySelector('#script-style').value;
   const channel = container.querySelector('#script-channel').value.trim();
   const { claudeApiKey: apiKey } = getSettings();
+  const audience = getTargetAudience(container);
+  const toneMix  = getToneMix(container);
+  const depth    = getExpertiseDepth(container);
 
   const statusEl = container.querySelector('#script-status');
   const btn      = container.querySelector('#generate-script-btn');
@@ -398,7 +559,7 @@ async function generateScript(container) {
   try {
     let script, sources = '';
     if (apiKey) {
-      ({ script, sources } = await generateWithClaude({ topic, tone, length, style, channel, apiKey, statusEl }));
+      ({ script, sources } = await generateWithClaude({ topic, tone, length, style, channel, apiKey, statusEl, audience, toneMix, depth }));
     } else {
       script = generateTemplate({ topic, tone, length, style, channel });
       clearTimeout(t1); clearTimeout(t2);
@@ -699,9 +860,10 @@ async function generateScriptWithoutWebSearch(prompt, systemPrompt, maxTokens, a
   return { script: fullScript, sources: '' };
 }
 
-async function generateWithClaude({ topic, tone, length, style, channel, apiKey, statusEl }) {
-  const channelLine = channel ? ` Channel: "${channel}".` : '';
-  const maxTokens   = TOKEN_MAP[length] ?? 4000;
+async function generateWithClaude({ topic, tone, length, style, channel, apiKey, statusEl, audience = 'mid-level engineers', toneMix = { technical: 60, business: 25, casual: 15 }, depth = 'in-depth' }) {
+  const channelLine  = channel ? ` Channel: "${channel}".` : '';
+  const maxTokens    = TOKEN_MAP[length] ?? 4000;
+  const audienceBlock = buildAudiencePrompt(audience, toneMix, depth);
 
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   const year  = new Date().getFullYear();
@@ -709,6 +871,8 @@ async function generateWithClaude({ topic, tone, length, style, channel, apiKey,
 
   const prompt = `You are a YouTube scriptwriter. Write a ready-to-record ${style} script.${channelLine}
 Topic: ${topic} | Tone: ${tone} | Length: ${length}
+
+${audienceBlock}
 
 IMPORTANT: Always complete the full script including the closing CTA and sign-off. Never end mid-sentence or mid-section. If running long, condense earlier sections rather than cutting off the ending.
 
@@ -815,6 +979,115 @@ And if you haven't already, subscribe and hit the notification bell — our next
 Drop a comment below — I want to know: what's the one thing about ${topic} that took you the longest to actually understand? I read every comment and I genuinely want to hear your experience.
 
 See you in the next one!`;
+}
+
+// ── Audience / Tone / Depth helpers ──────────────────────────────────────────
+
+function updateSliders(container, toneState, changed, newValue) {
+  const others      = ['technical', 'business', 'casual'].filter(k => k !== changed);
+  const oldOtherSum = others.reduce((s, k) => s + toneState[k], 0);
+  const diff        = toneState[changed] - newValue;
+  toneState[changed] = newValue;
+
+  if (oldOtherSum === 0) {
+    const share = Math.floor(diff / others.length);
+    others.forEach(k => { toneState[k] = Math.max(0, toneState[k] + share); });
+  } else {
+    others.forEach(k => {
+      toneState[k] = Math.round(toneState[k] + diff * (toneState[k] / oldOtherSum));
+      toneState[k] = Math.max(0, toneState[k]);
+    });
+  }
+
+  // Ensure total = 100
+  const total = Object.values(toneState).reduce((s, v) => s + v, 0);
+  if (total !== 100) toneState[others[0]] = Math.max(0, toneState[others[0]] + (100 - total));
+
+  applySliderValues(container, toneState);
+}
+
+function applySliderValues(container, toneState) {
+  const total = Object.values(toneState).reduce((s, v) => s + v, 0);
+  ['technical', 'business', 'casual'].forEach(key => {
+    const slider = container.querySelector(`#${key}Slider`);
+    const pct    = container.querySelector(`#${key}Pct`);
+    if (slider) slider.value = toneState[key];
+    if (pct)    pct.textContent = `${toneState[key]}%`;
+  });
+  const totalLabel = container.querySelector('#toneTotalLabel');
+  if (totalLabel) {
+    totalLabel.textContent = `${total}%`;
+    totalLabel.style.color = total === 100 ? 'var(--muted)' : '#f57a7a';
+  }
+}
+
+function getTargetAudience(container) {
+  const custom = container.querySelector('#customAudience')?.value.trim();
+  if (custom) return custom;
+  const active = container.querySelector('.aud-pill.active');
+  return active ? active.dataset.value : 'general audience';
+}
+
+function getToneMix(container) {
+  return {
+    technical: parseInt(container.querySelector('#technicalSlider')?.value || '60'),
+    business:  parseInt(container.querySelector('#businessSlider')?.value  || '25'),
+    casual:    parseInt(container.querySelector('#casualSlider')?.value    || '15'),
+  };
+}
+
+function getExpertiseDepth(container) {
+  const active = container.querySelector('.depth-pill.active');
+  return active ? active.dataset.value : 'in-depth';
+}
+
+function updateSummary(container) {
+  const audience  = getTargetAudience(container);
+  const tone      = getToneMix(container);
+  const depth     = getExpertiseDepth(container);
+  const summaryEl = container.querySelector('#settings-summary');
+  if (!summaryEl) return;
+  summaryEl.innerHTML = `
+    <strong>Audience:</strong> ${escHtml(audience)} &nbsp;·&nbsp;
+    <strong>Tone:</strong> ${tone.technical}% technical / ${tone.business}% business / ${tone.casual}% casual &nbsp;·&nbsp;
+    <strong>Depth:</strong> ${depth}
+  `;
+}
+
+function getAudienceInstructions(audience) {
+  const map = {
+    'complete beginners':    'Use analogies and simple language. Define all technical terms. Build concepts from scratch.',
+    'junior developers':     'Assume basic programming knowledge. Explain patterns and best practices. Encourage experimentation.',
+    'mid-level engineers':   'Assume solid technical foundation. Focus on trade-offs, patterns, and real-world scenarios.',
+    'senior engineers':      'Assume deep expertise. Focus on architecture, system design, and nuanced trade-offs.',
+    'engineering managers':  'Balance technical accuracy with business impact. Highlight team and process implications.',
+    'business professionals':'Minimise jargon. Emphasise ROI, competitive advantage, and strategic implications.',
+    'startup founders':      'Focus on speed, pragmatism, and leverage. What matters most with limited resources.',
+    'students':              'Explain concepts clearly. Connect theory to practice. Encourage curiosity.',
+  };
+  return map[audience] ? `AUDIENCE GUIDANCE: ${map[audience]}` : '';
+}
+
+function buildAudiencePrompt(audience, toneMix, depth) {
+  const toneDesc = [];
+  if (toneMix.technical >= 40) toneDesc.push('technically detailed');
+  if (toneMix.business  >= 30) toneDesc.push('business-focused');
+  if (toneMix.casual    >= 30) toneDesc.push('casual and conversational');
+  const toneStr = toneDesc.length ? toneDesc.join(', ') : 'balanced';
+
+  const depthMap = {
+    'surface':   'Keep explanations high-level and accessible. Avoid jargon. Focus on big picture concepts.',
+    'practical': 'Include practical examples and actionable steps. Some technical detail where useful.',
+    'in-depth':  'Go deep on the subject. Include technical nuance, examples, and edge cases.',
+    'expert':    'Assume significant prior knowledge. Use precise technical language. Explore advanced concepts and trade-offs.',
+  };
+
+  return [
+    `TARGET AUDIENCE: ${audience}`,
+    `TONE MIX: ${toneMix.technical}% technical / ${toneMix.business}% business / ${toneMix.casual}% casual — write in a ${toneStr} voice.`,
+    `TECHNICAL DEPTH: ${depth} — ${depthMap[depth] || depthMap['in-depth']}`,
+    getAudienceInstructions(audience),
+  ].filter(Boolean).join('\n');
 }
 
 function escHtml(str) {
