@@ -81,6 +81,11 @@ export function cleanScript(raw) {
     // Drop lines that are now empty or whitespace-only after phase 2 removals
     if (!l) return '';
 
+    // DELETE: line that is ONLY bold/italic wrapped content (e.g. **BOLD ONLY**)
+    if (/^\*{1,3}[^*\n]+\*{1,3}$/.test(l)) return '';
+    // DELETE: bold-wrapped bracket content (e.g. **[END OF CHAPTER 1]**)
+    if (/^\*{1,2}\[.*\]\*{1,2}$/.test(l)) return '';
+
     // Drop style/metadata label-only lines
     if (/^(entertainment|tutorial|how-to|opinion|commentary|news|explainer|storytime|narrative|tech|short|medium|long|minutes?)\s*$/i.test(l)) return '';
 
