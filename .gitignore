@@ -5,3 +5,6 @@ slides/
 temp/
 .env
 render-input.json
+highlight.mp4
+highlight-input.json
+highlight-output.json

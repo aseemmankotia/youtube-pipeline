@@ -66,6 +66,14 @@ function parseJSON(text) {
   return JSON.parse(match[1]);
 }
 
+function downloadJson(data, filename) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
 // ── Render ────────────────────────────────────────────────────────────────────
 
 export function renderDistribute(container) {
@@ -187,86 +195,117 @@ export function renderDistribute(container) {
 
       <!-- ── Card 3: Highlight Clip ─────────────────────────────────────────── -->
       <div class="card" id="dist-highlight-card">
-        <h2 style="margin-bottom:4px;">🎬 60-Second Highlight Clip</h2>
+        <h2 style="margin-bottom:4px;">✂️ 60-Second Highlight</h2>
         <p style="color:var(--muted);font-size:0.84rem;margin-bottom:16px;">
-          Claude finds the most compelling 60-second segment.
-          Then run <code style="font-size:0.82rem;">npm run highlight</code> to cut the clip with FFmpeg.
+          Auto-cut the best moment for TikTok, Reels &amp; Twitter
         </p>
 
         <div class="dist-card-status status-bar" style="display:none;"></div>
 
-        <!-- Analysis result -->
-        <div id="highlight-result" style="display:none;">
-          <div style="background:var(--surface2);border:1px solid var(--border);
-               border-radius:var(--radius);padding:16px;margin-bottom:14px;">
-            <div style="margin-bottom:10px;">
-              <label style="margin-bottom:4px;">Segment selected</label>
-              <p id="highlight-reason" style="font-size:0.86rem;color:var(--muted);"></p>
-            </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:10px;">
-              <div>
-                <label>Starts at</label>
-                <p id="highlight-start" style="font-size:0.84rem;font-family:monospace;
-                   background:var(--surface);padding:6px 10px;border-radius:4px;
-                   border:1px solid var(--border);"></p>
-              </div>
-              <div>
-                <label>Ends at</label>
-                <p id="highlight-end" style="font-size:0.84rem;font-family:monospace;
-                   background:var(--surface);padding:6px 10px;border-radius:4px;
-                   border:1px solid var(--border);"></p>
-              </div>
-            </div>
-            <div style="margin-bottom:10px;">
-              <label>Suggested caption (3-line)</label>
-              <textarea id="highlight-caption" rows="3" readonly
-                style="font-size:0.85rem;resize:none;background:var(--surface);"></textarea>
-              <button class="btn btn-secondary" id="copy-caption-btn"
-                style="font-size:0.78rem;padding:4px 12px;margin-top:6px;">
-                Copy Caption
-              </button>
-            </div>
-            <div style="margin-bottom:10px;">
-              <label>Pre-written tweet</label>
-              <textarea id="highlight-tweet" rows="3" readonly
-                style="font-size:0.85rem;resize:none;background:var(--surface);"></textarea>
-              <button class="btn btn-secondary" id="copy-tweet-btn"
-                style="font-size:0.78rem;padding:4px 12px;margin-top:6px;">
-                Copy Tweet
-              </button>
-            </div>
+        <!-- Step indicator -->
+        <div style="display:flex;align-items:center;margin-bottom:20px;font-size:0.76rem;gap:0;">
+          <div id="hl-step-1" style="display:flex;align-items:center;gap:5px;white-space:nowrap;">
+            <span class="hl-dot" style="width:8px;height:8px;border-radius:50%;background:var(--border);flex-shrink:0;transition:background .2s;"></span>
+            Main video ready
           </div>
+          <div style="flex:1;height:1px;background:var(--border);margin:0 8px;min-width:12px;"></div>
+          <div id="hl-step-2" style="display:flex;align-items:center;gap:5px;white-space:nowrap;">
+            <span class="hl-dot" style="width:8px;height:8px;border-radius:50%;background:var(--border);flex-shrink:0;transition:background .2s;"></span>
+            Analyzing segment
+          </div>
+          <div style="flex:1;height:1px;background:var(--border);margin:0 8px;min-width:12px;"></div>
+          <div id="hl-step-3" style="display:flex;align-items:center;gap:5px;white-space:nowrap;">
+            <span class="hl-dot" style="width:8px;height:8px;border-radius:50%;background:var(--border);flex-shrink:0;transition:background .2s;"></span>
+            Cutting clip
+          </div>
+          <div style="flex:1;height:1px;background:var(--border);margin:0 8px;min-width:12px;"></div>
+          <div id="hl-step-4" style="display:flex;align-items:center;gap:5px;white-space:nowrap;">
+            <span class="hl-dot" style="width:8px;height:8px;border-radius:50%;background:var(--border);flex-shrink:0;transition:background .2s;"></span>
+            Ready to share
+          </div>
+        </div>
 
-          <!-- Run command -->
-          <div style="background:#1a2a3a;border:1px solid #1e4a7a;border-radius:var(--radius);
+        <!-- Generate button -->
+        <button class="btn btn-secondary" id="highlight-generate-btn">
+          🎬 Generate Highlight
+        </button>
+
+        <!-- Results panel (hidden until generated) -->
+        <div id="highlight-result" style="display:none;margin-top:16px;">
+
+          <!-- Terminal instruction -->
+          <div style="background:#0d1f2e;border:1px solid #1e4a7a;border-radius:var(--radius);
                padding:14px 16px;margin-bottom:14px;">
-            <p style="font-size:0.82rem;color:#7ab8f5;margin-bottom:6px;">
-              ▶ Run this to cut the clip (requires the video file path):
+            <p style="font-size:0.82rem;color:#7ab8f5;margin-bottom:8px;font-weight:600;">
+              ▶ Run in Terminal to cut the clip:
             </p>
-            <code id="highlight-cmd"
-              style="font-size:0.83rem;color:#e8e8e8;display:block;word-break:break-all;"></code>
-            <button class="btn btn-secondary" id="copy-cmd-btn"
+            <code style="font-size:0.84rem;color:#e8e8e8;display:block;">npm run highlight</code>
+            <button class="btn btn-secondary" id="copy-hl-cmd-btn"
               style="font-size:0.78rem;padding:4px 12px;margin-top:10px;">
               Copy Command
             </button>
           </div>
 
-          <!-- Manual upload instructions -->
-          <div style="background:var(--surface2);border:1px solid var(--border);
-               border-radius:var(--radius);padding:14px 16px;font-size:0.84rem;">
-            <p style="color:var(--muted);margin-bottom:8px;">📱 After cutting, upload <code>highlight_clip.mp4</code> to:</p>
-            <ul style="list-style:none;display:flex;flex-direction:column;gap:4px;">
-              <li>• <strong>TikTok</strong> — tiktok.com/upload</li>
-              <li>• <strong>Instagram Reels</strong> — instagram.com (Create → Reel)</li>
-              <li>• <strong>Twitter / X</strong> — Attach the video to a tweet</li>
-              <li>• <strong>YouTube Shorts</strong> — Upload as a Short (≤60 seconds)</li>
-            </ul>
+          <!-- Video preview -->
+          <div style="margin-bottom:14px;">
+            <p style="font-size:0.82rem;color:var(--muted);margin-bottom:8px;">
+              Preview — loads after running <code>npm run highlight</code>:
+            </p>
+            <video id="hl-video-preview" controls
+              style="width:100%;max-width:280px;border-radius:8px;display:block;background:#000;">
+              <source src="highlight.mp4" type="video/mp4">
+            </video>
+            <button class="btn btn-secondary" id="hl-reload-btn"
+              style="font-size:0.78rem;padding:4px 12px;margin-top:8px;">
+              🔄 Reload Preview
+            </button>
           </div>
-        </div>
 
-        <button class="btn btn-secondary" id="highlight-analyze-btn">
-          🤖 Find Best 60 Seconds
-        </button>
+          <!-- TikTok/Instagram caption panel -->
+          <div style="background:var(--surface2);border:1px solid var(--border);
+               border-radius:var(--radius);padding:16px;margin-bottom:14px;">
+            <p style="font-size:0.82rem;font-weight:600;margin-bottom:10px;">📱 TikTok/Instagram Caption</p>
+            <div id="hl-caption-lines"
+              style="font-size:0.9rem;line-height:1.9;margin-bottom:8px;"></div>
+            <div id="hl-hashtags"
+              style="font-size:0.83rem;color:var(--accent);margin-bottom:12px;"></div>
+            <button class="btn btn-secondary" id="copy-hl-caption-btn"
+              style="font-size:0.78rem;padding:4px 12px;">Copy All</button>
+          </div>
+
+          <!-- Twitter/X post panel -->
+          <div style="background:var(--surface2);border:1px solid var(--border);
+               border-radius:var(--radius);padding:16px;margin-bottom:14px;">
+            <p style="font-size:0.82rem;font-weight:600;margin-bottom:10px;">🐦 Twitter/X Post</p>
+            <textarea id="hl-tweet" rows="6" readonly
+              style="font-size:0.84rem;resize:none;background:var(--surface);width:100%;"></textarea>
+            <button class="btn btn-secondary" id="copy-hl-tweet-btn"
+              style="font-size:0.78rem;padding:4px 12px;margin-top:8px;">Copy</button>
+          </div>
+
+          <!-- Upload links -->
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
+            <a href="https://www.tiktok.com/upload" target="_blank" rel="noopener"
+              class="btn btn-secondary"
+              style="font-size:0.84rem;text-decoration:none;">
+              📱 Open TikTok
+            </a>
+            <a href="https://www.instagram.com" target="_blank" rel="noopener"
+              class="btn btn-secondary"
+              style="font-size:0.84rem;text-decoration:none;">
+              📸 Open Instagram
+            </a>
+            <a href="https://twitter.com" target="_blank" rel="noopener"
+              class="btn btn-secondary"
+              style="font-size:0.84rem;text-decoration:none;">
+              🐦 Open Twitter/X
+            </a>
+          </div>
+
+          <button class="btn btn-secondary" id="highlight-regen-btn">
+            🔄 Generate New Highlight
+          </button>
+        </div>
       </div>
     </div>
   `;
@@ -654,85 +693,141 @@ Rules:
   // ── Card 3: Highlight Clip ─────────────────────────────────────────────────
 
   const highlightCard = container.querySelector('#dist-highlight-card');
-  const analyzeBtn    = container.querySelector('#highlight-analyze-btn');
+  const generateHlBtn = container.querySelector('#highlight-generate-btn');
 
-  analyzeBtn.addEventListener('click', async () => {
+  function setHlStep(n) {
+    for (let i = 1; i <= 4; i++) {
+      const el  = container.querySelector(`#hl-step-${i}`);
+      const dot = el?.querySelector('.hl-dot');
+      if (!el || !dot) continue;
+      if (i < n) {
+        el.style.color       = '#16a34a';
+        dot.style.background = '#16a34a';
+      } else if (i === n) {
+        el.style.color       = 'var(--accent)';
+        dot.style.background = 'var(--accent)';
+      } else {
+        el.style.color       = 'var(--muted)';
+        dot.style.background = 'var(--border)';
+      }
+    }
+  }
+
+  generateHlBtn.addEventListener('click', async () => {
     const { claudeApiKey } = getSettings();
     if (!claudeApiKey) return setCardStatus(highlightCard, 'error', 'Add a Claude API key in Settings first.');
     if (!container._videoData) return;
 
-    const { script, title, ytUrl } = container._videoData;
+    const { script, title, ytUrl, tags } = container._videoData;
     if (!script) return setCardStatus(highlightCard, 'error', 'No script found. Re-generate from Tab 2.');
 
-    analyzeBtn.disabled = true;
+    generateHlBtn.disabled = true;
+    setHlStep(1);
     setCardStatus(highlightCard, 'info', '<span class="loader"></span> Analysing script for best 60-second segment…');
 
     try {
+      setHlStep(2);
+
       const raw = await callClaude(claudeApiKey, {
-        system: 'You are a video editor specialising in short-form content. Return ONLY valid JSON.',
-        user: `Script for video titled: "${title}"
+        system: `You analyze video scripts to find the most viral-worthy 60-second segment for TikTok/Reels.
 
-${script.slice(0, 8000)}
-
-Identify the single most compelling 60-second segment (~150 words) that:
+Choose a segment that:
 - Makes a strong standalone point
-- Has a surprising stat, insight, or counterintuitive idea
-- Works without context from the rest of the video
-- Has a natural start and end point
+- Has a surprising stat, insight or revelation
+- Starts with a hook that stops scrolling
+- Works without needing context from the rest
+- Has a natural start and end
+- Would make someone want to watch the full video
 
-Return JSON:
+Return ONLY JSON, no other text:
 {
-  "start_text": "exact first 8-10 words of the segment",
-  "end_text": "exact last 8-10 words of the segment",
-  "reason": "one sentence: why this segment works standalone",
-  "suggested_caption": "line1\\nline2\\nline3"
+  "start_text": "first 8-10 words of the segment",
+  "end_text": "last 8-10 words of the segment",
+  "word_count": 150,
+  "hook_type": "stat|question|revelation|story",
+  "why_viral": "one sentence reason this works",
+  "caption_line1": "first line of TikTok caption (max 8 words)",
+  "caption_line2": "second line (max 8 words)",
+  "caption_line3": "CTA line e.g. Full video in bio",
+  "suggested_hashtags": ["#tag1", "#tag2", "#tag3", "#tag4", "#tag5"]
 }`,
+        user: `Find the best 60-second highlight segment from this script about: ${title}\n\n${script.slice(0, 8000)}`,
         maxTokens: 500,
       });
 
-      const parsed = parseJSON(raw);
+      const segment = parseJSON(raw);
 
-      container.querySelector('#highlight-reason').textContent  = parsed.reason || '';
-      container.querySelector('#highlight-start').textContent   = `"${parsed.start_text}"`;
-      container.querySelector('#highlight-end').textContent     = `"${parsed.end_text}"`;
-      container.querySelector('#highlight-caption').value       = parsed.suggested_caption || '';
+      // Download highlight-input.json for the Node.js script
+      const hlInput = {
+        video_path:  'final-video.mp4',
+        script:      script,
+        topic:       title,
+        tags:        Array.isArray(tags) ? tags : [],
+        youtube_url: ytUrl || '',
+      };
+      downloadJson(hlInput, 'highlight-input.json');
 
-      // Pre-written tweet
-      const hashTags = '#tech #coding #programming';
-      const tweet = `New video: ${title}\n\n${parsed.suggested_caption?.split('\n')[0] || ''}\n\nFull video: ${ytUrl || ''}\n\n${hashTags}`;
-      container.querySelector('#highlight-tweet').value = tweet;
+      // Populate TikTok/Instagram caption panel
+      const lines = [segment.caption_line1, segment.caption_line2, segment.caption_line3].filter(Boolean);
+      container.querySelector('#hl-caption-lines').innerHTML =
+        lines.map(l => `<div>${escHtml(l)}</div>`).join('');
+      const hashStr = (segment.suggested_hashtags || []).join(' ');
+      container.querySelector('#hl-hashtags').textContent = hashStr;
 
-      // FFmpeg command
-      const cmd = `node highlight.js "YOUR_VIDEO.mp4"`;
-      container.querySelector('#highlight-cmd').textContent = cmd;
+      // Populate Twitter/X post
+      const tweetHashtags = (segment.suggested_hashtags || []).slice(0, 3).join(' ');
+      container.querySelector('#hl-tweet').value =
+        `${title}\n\n${segment.caption_line1 || ''}\n${segment.caption_line2 || ''}\n\nFull video: ${ytUrl || ''}\n\n${tweetHashtags}`;
 
       container.querySelector('#highlight-result').style.display = 'block';
-      analyzeBtn.textContent = '🔄 Re-analyse';
+      setHlStep(3);
+      setCardStatus(highlightCard, 'success',
+        `✅ highlight-input.json downloaded — ${escHtml(segment.why_viral || '')} · ` +
+        `Move file to project root then run <code>npm run highlight</code>`);
 
-      setCardStatus(highlightCard, 'success', `✅ Best segment found. Run the command below to cut the clip.`);
-      dispatchDistributionUpdate(container, 'highlight:analysed');
+      dispatchDistributionUpdate(container, 'highlight:prepared');
     } catch (err) {
       setCardStatus(highlightCard, 'error', escHtml(err.message));
+      setHlStep(1);
     } finally {
-      analyzeBtn.disabled = false;
+      generateHlBtn.disabled = false;
     }
   });
 
+  // Re-generate with a new segment selection
+  container.querySelector('#highlight-regen-btn').addEventListener('click', () => {
+    container.querySelector('#highlight-result').style.display = 'none';
+    generateHlBtn.click();
+  });
+
+  // Reload video preview after npm run highlight completes
+  container.querySelector('#hl-reload-btn').addEventListener('click', () => {
+    const v   = container.querySelector('#hl-video-preview');
+    const src = v.querySelector('source');
+    src.src   = `highlight.mp4?t=${Date.now()}`;
+    v.load();
+    setHlStep(4);
+  });
+
   // Copy buttons
-  container.querySelector('#copy-caption-btn').addEventListener('click', () => {
-    navigator.clipboard.writeText(container.querySelector('#highlight-caption').value);
-    const b = container.querySelector('#copy-caption-btn');
-    b.textContent = 'Copied!'; setTimeout(() => { b.textContent = 'Copy Caption'; }, 1500);
-  });
-  container.querySelector('#copy-tweet-btn').addEventListener('click', () => {
-    navigator.clipboard.writeText(container.querySelector('#highlight-tweet').value);
-    const b = container.querySelector('#copy-tweet-btn');
-    b.textContent = 'Copied!'; setTimeout(() => { b.textContent = 'Copy Tweet'; }, 1500);
-  });
-  container.querySelector('#copy-cmd-btn').addEventListener('click', () => {
-    navigator.clipboard.writeText(container.querySelector('#highlight-cmd').textContent);
-    const b = container.querySelector('#copy-cmd-btn');
+  container.querySelector('#copy-hl-cmd-btn').addEventListener('click', () => {
+    navigator.clipboard.writeText('npm run highlight');
+    const b = container.querySelector('#copy-hl-cmd-btn');
     b.textContent = 'Copied!'; setTimeout(() => { b.textContent = 'Copy Command'; }, 1500);
+  });
+
+  container.querySelector('#copy-hl-caption-btn').addEventListener('click', () => {
+    const lines  = container.querySelector('#hl-caption-lines').innerText;
+    const hashes = container.querySelector('#hl-hashtags').textContent;
+    navigator.clipboard.writeText(`${lines}\n\n${hashes}`);
+    const b = container.querySelector('#copy-hl-caption-btn');
+    b.textContent = 'Copied!'; setTimeout(() => { b.textContent = 'Copy All'; }, 1500);
+  });
+
+  container.querySelector('#copy-hl-tweet-btn').addEventListener('click', () => {
+    navigator.clipboard.writeText(container.querySelector('#hl-tweet').value);
+    const b = container.querySelector('#copy-hl-tweet-btn');
+    b.textContent = 'Copied!'; setTimeout(() => { b.textContent = 'Copy'; }, 1500);
   });
 }
 
