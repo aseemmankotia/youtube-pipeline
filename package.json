@@ -6,7 +6,9 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "render": "node render.js",
-    "highlight": "node highlight.js"
+    "highlight": "node highlight.js",
+    "thumbnail": "node thumbnail.js",
+    "marketing": "node thumbnail.js && echo 'Thumbnails ready — reload the Marketing tab in the app.'"
   },
   "repository": {
     "type": "git",

@@ -3,6 +3,7 @@ import { renderScript }    from './components/script.js';
 import { renderHeyGen }    from './components/heygen.js';
 import { renderYouTube }   from './components/youtube.js';
 import { renderDistribute } from './components/distribute.js';
+import { renderMarketing }  from './components/marketing.js';
 import { renderHistory, saveHistoryEntry, updateHistoryByHeygenId } from './components/history.js';
 import { renderSettings, getSettings } from './components/settings.js';
 import { logToSheets }        from './components/sheets.js';
@@ -34,6 +35,7 @@ const scriptPanel      = document.getElementById('tab-script');
 const videoPanel       = document.getElementById('tab-video');
 const uploadPanel      = document.getElementById('tab-upload');
 const distributePanel  = document.getElementById('tab-distribute');
+const marketingPanel   = document.getElementById('tab-marketing');
 const historyPanel     = document.getElementById('tab-history');
 const settingsPanel    = document.getElementById('tab-settings');
 
@@ -42,6 +44,7 @@ renderScript(scriptPanel);
 renderHeyGen(videoPanel);
 renderYouTube(uploadPanel);
 renderDistribute(distributePanel);
+renderMarketing(marketingPanel);
 renderHistory(historyPanel);
 renderSettings(settingsPanel);
 
@@ -119,10 +122,28 @@ document.addEventListener('distribution-update', (e) => {
   updateHistoryByHeygenId(heygenVideoId, { _distributionChannel: channel });
 });
 
-// Step 4 complete: update history, log to Sheets, send email, populate distribute tab
+// Step 4 complete: update history, log to Sheets, send email, populate distribute + marketing tabs
 document.addEventListener('upload-complete', (e) => {
   const { videoId: ytVideoId, ytUrl, youtubeTitle, heygenVideoId, heygenVideoUrl } = e.detail || {};
   const topic = youtubeTitle || '';
+
+  // Persist pipeline state for Marketing tab (localStorage keys match marketing.js K map)
+  localStorage.setItem('pipeline_current_topic',   _pipelineTopic || topic);
+  localStorage.setItem('pipeline_current_script',  _pipelineScript);
+  localStorage.setItem('pipeline_youtube_url',     ytUrl  || '');
+  localStorage.setItem('pipeline_youtube_id',      ytVideoId || '');
+  localStorage.setItem('pipeline_youtube_title',   topic);
+
+  // Notify marketing tab of new video data
+  if (marketingPanel._setVideoData) {
+    marketingPanel._setVideoData({
+      topic:   _pipelineTopic || topic,
+      script:  _pipelineScript,
+      ytUrl:   ytUrl  || '',
+      ytId:    ytVideoId || '',
+      ytTitle: topic,
+    });
+  }
 
   // Auto-populate distribute tab and switch to it
   if (distributePanel._setVideoData) {
