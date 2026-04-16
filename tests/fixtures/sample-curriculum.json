@@ -1,0 +1,23 @@
+[
+  {
+    "chapter": 1,
+    "title": "Introduction to Kubernetes",
+    "topics": ["What is Kubernetes", "Why containers", "Architecture overview"],
+    "duration_minutes": 12,
+    "skill_level": "beginner"
+  },
+  {
+    "chapter": 2,
+    "title": "Core Concepts: Pods, Services, Deployments",
+    "topics": ["Pods explained", "Services and networking", "Deployment strategies"],
+    "duration_minutes": 18,
+    "skill_level": "beginner"
+  },
+  {
+    "chapter": 3,
+    "title": "Production Best Practices",
+    "topics": ["Resource limits", "Health checks", "Namespace isolation", "RBAC"],
+    "duration_minutes": 22,
+    "skill_level": "intermediate"
+  }
+]

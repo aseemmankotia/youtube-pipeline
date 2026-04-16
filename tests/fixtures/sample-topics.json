@@ -1,0 +1,26 @@
+[
+  {
+    "title": "AI Agents Are Replacing DevOps Engineers in 2026",
+    "summary": "Recent 2026 reports show AI agents now handle 40% of routine infrastructure tasks, sparking debate about the future of DevOps roles.",
+    "tags": ["AI", "DevOps", "Automation"],
+    "hook": "Your job description just changed forever",
+    "trending_since": "April 2026",
+    "source_hint": "CNCF Annual Survey 2026 + Hacker News trending"
+  },
+  {
+    "title": "Kubernetes 2.0: What Nobody Is Talking About",
+    "summary": "The upcoming Kubernetes 2.0 release includes breaking changes that will affect every cluster running in production today.",
+    "tags": ["Kubernetes", "Cloud Native", "Platform Engineering"],
+    "hook": "Every production cluster is affected",
+    "trending_since": "March 2026",
+    "source_hint": "Kubernetes GitHub discussions + CNCF blog"
+  },
+  {
+    "title": "Why Rust Is Eating Python's Lunch in 2026",
+    "summary": "Benchmark data from 2026 shows Rust now outperforms Python by 50x in ML inference workloads, with major frameworks migrating.",
+    "tags": ["Rust", "Python", "Performance"],
+    "hook": "The performance gap is now impossible to ignore",
+    "trending_since": "April 2026",
+    "source_hint": "Reddit r/rust + Stack Overflow Developer Survey 2026"
+  }
+]

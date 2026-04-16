@@ -4,7 +4,10 @@
   "description": "A browser-based 4-step pipeline for end-to-end YouTube content creation: **Trend discovery → Script → AI avatar video → Auto-upload.**",
   "main": "app.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node tests/test-runner.js",
+    "test:watch": "node --watch --test tests/e2e.test.js",
+    "test:verbose": "node --test --test-reporter=spec tests/e2e.test.js",
+    "predeploy": "bash scripts/pre-deploy-check.sh",
     "render": "node render.js",
     "highlight": "node highlight.js",
     "thumbnail": "node thumbnail.js",

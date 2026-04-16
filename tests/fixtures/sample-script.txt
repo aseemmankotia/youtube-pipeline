@@ -1,0 +1,74 @@
+# Kubernetes in 2026: Everything You Need to Know
+
+**CHAPTER INTRO**
+
+## Introduction
+
+Welcome to this video about Kubernetes. [HOOK] Today we are going to cover everything you need to get started with container orchestration in 2026. Whether you are a complete beginner or an experienced developer, this video has something for you.
+
+Word count: 1200
+Duration: 8 minutes
+
+**Why Kubernetes Matters**
+
+Let me start with the big picture. Kubernetes has become the standard for deploying containerised applications at scale. According to the latest Cloud Native Computing Foundation survey, over 96 percent of organisations are now using or evaluating Kubernetes. That is a massive adoption rate for a technology that only became generally available in 2015.
+
+So what exactly is Kubernetes? Think of it as an operating system for your applications. [PAUSE] Just like your laptop's operating system manages resources and runs programs, Kubernetes manages containers and runs your services.
+
+---
+
+Here is the basic architecture:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: my-app
+  template:
+    metadata:
+      labels:
+        app: my-app
+    spec:
+      containers:
+      - name: my-app
+        image: my-app:latest
+        ports:
+        - containerPort: 8080
+```
+
+That configuration tells Kubernetes to run three copies of your application and keep them healthy automatically.
+
+===
+
+## Core Concepts
+
+**Pods, Services, and Deployments**
+
+Now let us talk about the three most important Kubernetes objects you will work with every day.
+
+A **Pod** is the smallest deployable unit. It is one or more containers that share a network and storage. Most of the time, you will have one container per pod, but there are cases where you need multiple.
+
+A **Service** is how you expose your pods to traffic. Without a service, your pods are isolated. With a service, they can receive requests from other applications or from the internet.
+
+A **Deployment** is how you manage your pods. It ensures the right number of pod replicas are running and handles updates with zero downtime.
+
+[B-ROLL: Show diagram of pods and services]
+
+Here is something that trips up a lot of beginners. Pods are ephemeral. They die and get replaced all the time. That is actually a feature, not a bug. Kubernetes is designed around this assumption and it makes your applications much more resilient.
+
+## Production Tips
+
+*(speaking energetically)*
+
+When you move to production, there are three things you absolutely must get right. Resource limits, health checks, and namespace isolation. Let me walk you through each one quickly.
+
+Resource limits prevent any single application from consuming all cluster resources. You define them like this in your pod specification. Health checks tell Kubernetes when your application is ready to receive traffic and when it needs to be restarted. Namespace isolation keeps different teams and environments separate.
+
+## Conclusion
+
+That covers the core concepts you need to get started with Kubernetes. If you found this helpful, please smash that subscribe button and hit the notification bell so you never miss a new video. Drop a comment below telling me what topic you want me to cover next. I read every single comment. See you in the next one!
