@@ -26,6 +26,11 @@
           title="Click to see API cost breakdown">
           💰 $0.00 today
         </button>
+        <span id="aiCostDisplay"
+          style="font-size:0.78rem;color:var(--muted);padding:4px 10px;
+                 background:var(--surface2);border:1px solid var(--border);
+                 border-radius:6px;white-space:nowrap;"
+          title="Session AI cost (Anthropic + Gemini)">AI: $0.0000</span>
       </nav>
     </div>
   </header>
@@ -42,6 +47,7 @@
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+  <script src="js/ai-client.js"></script>
   <script type="module" src="app.js"></script>
 </body>
 </html>

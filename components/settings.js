@@ -22,14 +22,36 @@ export function renderSettings(container) {
 
   container.innerHTML = `
     <div class="card">
-      <h2>Script Generation</h2>
+      <h2>AI Providers</h2>
+      <p style="font-size:0.85rem;color:var(--muted);margin-bottom:16px;">
+        Claude (Anthropic) is the primary AI. When Claude hits a credit/balance error,
+        Gemini Flash is used as an automatic fallback.
+      </p>
       <div class="form-group" data-field="claudeApiKey">
         <label for="sg-claude-key">
           Anthropic API Key
-          <span style="color:var(--muted);font-weight:400"> — optional, enables AI-generated scripts</span>
+          <span style="color:var(--muted);font-weight:400"> — primary provider</span>
         </label>
         <input type="password" id="sg-claude-key"
           placeholder="sk-ant-…" autocomplete="off" value="${esc(s.claudeApiKey)}" />
+      </div>
+      <div class="form-group" data-field="geminiApiKey" style="margin-top:12px;">
+        <label for="sg-gemini-key">
+          Google Gemini API Key
+          <span style="color:var(--muted);font-weight:400"> — fallback provider (free tier available)</span>
+        </label>
+        <input type="password" id="sg-gemini-key"
+          placeholder="AIza…" autocomplete="off" value="${esc(s.geminiApiKey)}" />
+        <p style="font-size:0.78rem;color:var(--muted);margin-top:4px;">
+          Get a free key at <a href="https://aistudio.google.com/app/apikey" target="_blank"
+            rel="noopener" style="color:var(--accent);">aistudio.google.com</a>
+        </p>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:8px;">
+        <button class="btn btn-secondary" id="sg-ai-test-btn" style="font-size:0.82rem;padding:6px 14px;">
+          🤖 Test AI providers
+        </button>
+        <span id="sg-ai-test-status" style="font-size:0.82rem;color:var(--muted);"></span>
       </div>
     </div>
 
@@ -216,6 +238,62 @@ export function renderSettings(container) {
     });
   });
 
+  // Test AI providers button
+  container.querySelector('#sg-ai-test-btn').addEventListener('click', async () => {
+    const btn      = container.querySelector('#sg-ai-test-btn');
+    const statusEl = container.querySelector('#sg-ai-test-status');
+    btn.disabled   = true;
+    btn.textContent = 'Testing…';
+    statusEl.textContent = '';
+    statusEl.style.color = 'var(--muted)';
+
+    const { claudeApiKey, geminiApiKey } = getSettings();
+    const results = [];
+
+    if (claudeApiKey) {
+      try {
+        const res = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': claudeApiKey,
+            'anthropic-version': '2023-06-01',
+            'anthropic-dangerous-direct-browser-access': 'true',
+          },
+          body: JSON.stringify({
+            model: 'claude-haiku-4-5-20251001',
+            max_tokens: 16,
+            messages: [{ role: 'user', content: 'Say "ok".' }],
+          }),
+        });
+        results.push(res.ok ? '✅ Claude' : `❌ Claude (${res.status})`);
+      } catch { results.push('❌ Claude (network error)'); }
+    } else {
+      results.push('⬜ Claude (no key)');
+    }
+
+    if (geminiApiKey) {
+      try {
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'Say "ok".' }] }], generationConfig: { maxOutputTokens: 8 } }),
+          }
+        );
+        results.push(res.ok ? '✅ Gemini' : `❌ Gemini (${res.status})`);
+      } catch { results.push('❌ Gemini (network error)'); }
+    } else {
+      results.push('⬜ Gemini (no key)');
+    }
+
+    statusEl.textContent = results.join('  ·  ');
+    statusEl.style.color = results.some(r => r.startsWith('✅')) ? '#7af57a' : '#f57a7a';
+    btn.disabled    = false;
+    btn.textContent = '🤖 Test AI providers';
+  });
+
   // Test YouTube connection button
   container.querySelector('#sg-yt-test-btn').addEventListener('click', async () => {
     const btn      = container.querySelector('#sg-yt-test-btn');
@@ -300,6 +378,7 @@ function persist(container) {
   }
   saveSettings({
     claudeApiKey:          container.querySelector('#sg-claude-key').value.trim(),
+    geminiApiKey:          container.querySelector('#sg-gemini-key').value.trim(),
     heygenVoiceId:         container.querySelector('#sg-hg-voice').value.trim(),
     ytClientId:            container.querySelector('#sg-yt-clientid').value.trim(),
     ytClientSecret:        container.querySelector('#sg-yt-secret').value.trim(),

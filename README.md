@@ -49,9 +49,29 @@ npx serve .
 
 All credentials live in the **⚙ Settings** tab. They're auto-saved to `localStorage` as you type — no save button needed. A green ✓ appears next to each filled field. A red dot on the Settings button means required credentials are missing.
 
+---
+
+## AI Provider Setup
+
+The pipeline uses **Claude (Anthropic)** as the primary AI for all generation tasks. When Claude hits a credit or balance error, it automatically falls back to **Gemini Flash (Google)** — no manual intervention needed.
+
+### Anthropic (Claude)
+1. Sign up at [console.anthropic.com](https://console.anthropic.com)
+2. Create an API key → paste into ⚙ Settings → **Anthropic API Key**
+
+### Google Gemini (fallback)
+1. Get a free key at [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)
+2. Paste into ⚙ Settings → **Google Gemini API Key**
+3. Gemini Flash is used automatically when Claude returns a balance/credit error, or if no Claude key is configured
+
+Click **🤖 Test AI providers** in Settings to verify both keys work.
+
+---
+
 | Credential | Required | Where to get it |
 |------------|----------|-----------------|
 | Anthropic API Key | Optional | console.anthropic.com — enables AI scripts (template fallback otherwise) |
+| Google Gemini API Key | Optional | aistudio.google.com — automatic fallback when Claude balance runs out |
 | HeyGen API Key | Step 3 | app.heygen.com → Settings → API |
 | HeyGen Avatar ID | Step 3 | app.heygen.com → Avatars → click avatar → copy ID |
 | HeyGen Voice ID | Step 3 | `curl https://api.heygen.com/v2/voices -H "X-Api-Key: KEY"` |

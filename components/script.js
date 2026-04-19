@@ -643,41 +643,51 @@ Return ONLY the expanded script, no commentary.`;
     : `Expand this script:\n\n${container._script}`;
 
   try {
-    const res = await fetchWithRetry(
-      'https://api.anthropic.com/v1/messages',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true',
-        },
-        body: JSON.stringify({
-          model: 'claude-opus-4-5',
-          max_tokens: isShorten ? 4000 : 8000,
-          system: systemPrompt,
-          messages: [{ role: 'user', content: userMsg }],
-        }),
-      },
-      statusEl
-    );
+    let newScript;
+    const action = isShorten ? 'script_shorten' : 'script_expand';
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      if (res.status === 429) throw new Error('Rate limit hit — please wait 30 seconds and try again.');
-      throw new Error(`Claude API error: ${err?.error?.message || res.statusText}`);
+    // Try via window.callAI (handles Gemini fallback automatically)
+    if (typeof window.callAI === 'function') {
+      const result = await window.callAI({
+        prompt:       userMsg,
+        systemPrompt,
+        maxTokens:    isShorten ? 4000 : 8000,
+        action,
+      });
+      newScript = result.text;
+      trackUsage(action, result.inputTokens || 0, result.outputTokens || 0);
+    } else {
+      // Direct call (ai-client.js not loaded)
+      const res = await fetchWithRetry(
+        'https://api.anthropic.com/v1/messages',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+            'anthropic-dangerous-direct-browser-access': 'true',
+          },
+          body: JSON.stringify({
+            model: 'claude-opus-4-5',
+            max_tokens: isShorten ? 4000 : 8000,
+            system: systemPrompt,
+            messages: [{ role: 'user', content: userMsg }],
+          }),
+        },
+        statusEl
+      );
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        if (res.status === 429) throw new Error('Rate limit hit — please wait 30 seconds and try again.');
+        throw new Error(`Claude API error: ${err?.error?.message || res.statusText}`);
+      }
+      const data = await res.json();
+      newScript = data.content?.[0]?.text || '';
+      trackUsage(action, data.usage?.input_tokens || 0, data.usage?.output_tokens || 0);
     }
 
-    const data      = await res.json();
-    const newScript = data.content?.[0]?.text || '';
-    if (!newScript) throw new Error('Empty response from Claude.');
-
-    trackUsage(
-      isShorten ? 'script_shorten' : 'script_expand',
-      data.usage?.input_tokens  || 0,
-      data.usage?.output_tokens || 0
-    );
+    if (!newScript) throw new Error('Empty response from AI.');
 
     const prevWC = wordCount(container._script);
     setScript(container, newScript);
@@ -756,7 +766,9 @@ async function callClaudeAPI(apiKey, body, statusEl) {
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     if (res.status === 429) throw new Error('Rate limit hit — please wait 30 seconds and try again.');
-    throw new Error(`Claude API error: ${err?.error?.message || res.statusText}`);
+    const msg = err?.error?.message || res.statusText;
+    const isBalance = res.status === 400 && /credit|billing|quota/i.test(msg);
+    throw Object.assign(new Error(`Claude API error: ${msg}`), { isBalanceError: isBalance });
   }
   return res.json();
 }

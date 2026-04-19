@@ -384,7 +384,12 @@ Return 20 topics as JSON array with fields: title, summary, tags, hook, trending
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     if (res.status === 429) throw new Error('Rate limit hit — please wait 30 seconds and try again.');
-    throw new Error(`Claude API error (${res.status}): ${err?.error?.message || res.statusText}`);
+    const msg = err?.error?.message || res.statusText;
+    if (res.status === 400 && /credit|billing|quota/i.test(msg)) {
+      // Balance error — fall back to Gemini
+      return liveSearchGemini(niche, statusEl, queryMode);
+    }
+    throw new Error(`Claude API error (${res.status}): ${msg}`);
   }
 
   const data = await res.json();
@@ -431,6 +436,90 @@ Return 20 topics as JSON array with fields: title, summary, tags, hook, trending
   const topics = filterRecentTopics(mapped);
 
   return { topics, inputTokens, outputTokens };
+}
+
+// ── Gemini fallback for topic search ─────────────────────────────────────────
+
+async function liveSearchGemini(niche, statusEl, queryMode = 'primary') {
+  const { geminiApiKey } = getSettings();
+  if (!geminiApiKey) {
+    throw new Error('Anthropic credit limit reached and no Gemini API key configured. Add a Gemini key in ⚙ Settings.');
+  }
+
+  if (statusEl) {
+    statusEl.innerHTML = `
+      <div class="status-bar info">
+        <span class="loader"></span>
+        ⚡ Switched to Gemini Flash — searching for trending topics in <strong>${escHtml(niche)}</strong>…
+      </div>`;
+  }
+
+  const today   = new Date();
+  const dateStr = today.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+
+  const systemPrompt =
+    `You are a YouTube content strategist. Today is ${dateStr}.
+Find genuinely trending topics in: ${niche}
+Use your web search grounding to find current topics from the last 90 days only.
+Return ONLY a JSON array. Each item: { title, summary (1 sentence, include "Trending since [month year]"), tags (3 max), hook (1 sentence), trending_since, source_hint }`;
+
+  const userMsg = `Find 20 trending YouTube topics in "${niche}" right now (as of ${dateStr}).
+Only include topics with evidence of recent activity in the last 90 days.
+Return as a JSON array with fields: title, summary, tags, hook, trending_since, source_hint`;
+
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: userMsg }] }],
+        tools: [{ googleSearch: {} }],
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        generationConfig: { maxOutputTokens: 4000 },
+      }),
+    }
+  );
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(`Gemini error (${res.status}): ${err?.error?.message || res.statusText}`);
+  }
+
+  const data = await res.json();
+  const fullText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  const usage    = data.usageMetadata || {};
+
+  let parsed;
+  try {
+    const clean = fullText.replace(/```json|```/g, '').trim();
+    const match  = clean.match(/\[[\s\S]*\]/);
+    if (!match) throw new Error('No JSON array found');
+    parsed = JSON.parse(match[0]);
+  } catch (e) {
+    throw new Error('Could not parse Gemini topics: ' + e.message);
+  }
+
+  if (!Array.isArray(parsed) || !parsed.length) {
+    throw new Error('Invalid topics format from Gemini. Please try again.');
+  }
+
+  const mapped = parsed.map(item => ({
+    title:          String(item.title        || '').trim(),
+    desc:           String(item.summary      || item.desc || '').trim(),
+    trend:          (item.tags && item.tags[0]) ? String(item.tags[0]) : 'Trending',
+    hook:           String(item.hook         || '').trim(),
+    tags:           Array.isArray(item.tags) ? item.tags : [],
+    trending_since: String(item.trending_since || '').trim(),
+    source_hint:    String(item.source_hint  || '').trim(),
+  })).filter(t => t.title);
+
+  const topics = filterRecentTopics(mapped);
+  return {
+    topics,
+    inputTokens:  usage.promptTokenCount    || 0,
+    outputTokens: usage.candidatesTokenCount || 0,
+  };
 }
 
 // ── Topic cards ───────────────────────────────────────────────────────────────
