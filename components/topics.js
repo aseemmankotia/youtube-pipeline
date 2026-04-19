@@ -242,11 +242,105 @@ async function fetchTopics(container, onTopicSelect, forceRefresh, queryMode = '
 
     renderTopicCards(resultsEl, topics, niche, onTopicSelect);
   } catch (err) {
-    statusEl.innerHTML = `<div class="status-bar error">${escHtml(err.message)}</div>`;
+    console.error('[topics] fetchTopics error:', err);
+    statusEl.innerHTML = `<div class="status-bar error">${escHtml(err.message).replace(/\n/g, '<br>')}</div>`;
   } finally {
     btn.disabled = false;
     btn.innerHTML = '<span>Search Trends</span>';
   }
+}
+
+// ── Fix: fault-tolerant JSON parser for AI topic responses ───────────────────
+
+function parseGeminiTopics(text) {
+  console.log('[topics] Parsing response, length:', text.length);
+  console.log('[topics] Last 200 chars:', text.slice(-200));
+
+  // Strategy 1: Direct parse after stripping code fences
+  try {
+    const clean = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+    return JSON.parse(clean);
+  } catch (e1) {
+    console.log('[topics] Strategy 1 failed:', e1.message);
+  }
+
+  // Strategy 2: Extract outermost [ ... ]
+  try {
+    const start = text.indexOf('[');
+    const end   = text.lastIndexOf(']');
+    if (start !== -1 && end !== -1 && end > start) {
+      return JSON.parse(text.substring(start, end + 1));
+    }
+  } catch (e2) {
+    console.log('[topics] Strategy 2 failed:', e2.message);
+  }
+
+  // Strategy 3: Fix truncated JSON — close after last complete object
+  try {
+    const start = text.indexOf('[');
+    if (start !== -1) {
+      let jsonStr = text.substring(start);
+      const lastClosedEnd   = jsonStr.lastIndexOf('}]');
+      const lastClosedComma = jsonStr.lastIndexOf('},');
+      if (lastClosedEnd !== -1) {
+        jsonStr = jsonStr.substring(0, lastClosedEnd + 2);
+      } else if (lastClosedComma !== -1) {
+        jsonStr = jsonStr.substring(0, lastClosedComma + 1) + ']';
+      }
+      return JSON.parse(jsonStr);
+    }
+  } catch (e3) {
+    console.log('[topics] Strategy 3 failed:', e3.message);
+  }
+
+  // Strategy 4: Extract individual complete objects by regex
+  try {
+    const objects = [];
+    const objRegex = /\{[^{}]*"title"[^{}]*"summary"[^{}]*\}/gs;
+    let match;
+    while ((match = objRegex.exec(text)) !== null) {
+      try {
+        const obj = JSON.parse(match[0]);
+        if (obj.title && obj.summary) {
+          objects.push({
+            title:          obj.title,
+            summary:        obj.summary,
+            tags:           obj.tags || [],
+            hook:           obj.hook || '',
+            trending_since: obj.trending_since || 'Recent',
+            source_hint:    obj.source_hint || '',
+          });
+        }
+      } catch (_) { /* skip invalid object */ }
+    }
+    if (objects.length > 0) {
+      console.log(`[topics] Strategy 4: extracted ${objects.length} objects`);
+      return objects;
+    }
+  } catch (e4) {
+    console.log('[topics] Strategy 4 failed:', e4.message);
+  }
+
+  throw new Error(
+    `Could not parse topics after 4 attempts. ` +
+    `Response length: ${text.length}. ` +
+    `Preview: ${text.substring(0, 200)}`
+  );
+}
+
+function validateTopics(topics) {
+  if (!Array.isArray(topics)) throw new Error('Expected array of topics');
+  return topics.filter(t => {
+    const valid = t &&
+      typeof t.title   === 'string' && t.title.length   > 0 &&
+      typeof t.summary === 'string' && t.summary.length > 0;
+    if (!valid) { console.warn('[topics] Skipping invalid topic:', t); return false; }
+    t.tags           = t.tags || [];
+    t.hook           = t.hook || t.title;
+    t.trending_since = t.trending_since || 'Recent';
+    t.source_hint    = t.source_hint || '';
+    return true;
+  });
 }
 
 // ── Fix 3: filter out topics referencing content older than 90 days ───────────
@@ -336,22 +430,24 @@ Return 20 topics as JSON array with fields: title, summary, tags, hook, trending
     action: 'topic_search',
   });
 
-  let parsed;
+  let rawTopics;
   try {
-    const clean = fullText.replace(/```json|```/g, '').trim();
-    const jsonMatch = clean.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) throw new Error('No JSON array found in response');
-    parsed = JSON.parse(jsonMatch[0]);
+    rawTopics = parseGeminiTopics(fullText);
   } catch (e) {
-    console.error('[topics] parse failed. Full text:', fullText);
-    throw new Error('Could not parse topics: ' + e.message);
+    console.error('[topics] parse failed. Full response:', fullText);
+    throw new Error(
+      `Failed to parse topics — AI returned inconsistent formatting.\n` +
+      `Try clicking Search again.\n\nError: ${e.message}`
+    );
   }
 
-  if (!Array.isArray(parsed) || parsed.length === 0) {
-    throw new Error('Invalid topics format returned. Please try again.');
+  const validated = validateTopics(rawTopics);
+  if (validated.length === 0) {
+    throw new Error('No valid topics found in response. Try clicking Search again.');
   }
+  console.log(`[topics] ✅ Got ${validated.length} valid topics`);
 
-  const mapped = parsed.map(item => ({
+  const mapped = validated.map(item => ({
     title:          String(item.title        || '').trim(),
     desc:           String(item.summary      || item.desc || '').trim(),
     trend:          (item.tags && item.tags[0]) ? String(item.tags[0]) : 'Trending',

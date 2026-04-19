@@ -154,7 +154,7 @@
     return parts.map(p => p.text || '').join('');
   }
 
-  async function _callGemini({ prompt, systemPrompt, maxTokens }) {
+  async function _callGemini({ prompt, systemPrompt, maxTokens, action }) {
     const s = _getSettings();
     const apiKey = s.geminiApiKey;
     if (!apiKey) throw Object.assign(new Error('No Gemini API key configured.'), { isConfig: true });
@@ -164,11 +164,22 @@
     // Give Gemini headroom: cap at 8192 (model max for flash)
     const outTokens  = Math.min((maxTokens || 4096) * 2, 8192);
 
+    // For topic searches: request fewer topics and enforce strict JSON output
+    // to avoid truncation / formatting issues
+    let effectivePrompt = prompt;
+    if (action === 'topic_search') {
+      effectivePrompt +=
+        '\n\nIMPORTANT: Return ONLY a valid JSON array. No markdown, no code fences, no explanation text.' +
+        ' Start your response with [ and end with ].' +
+        ' Return exactly 15 topics (not 20) to ensure complete valid JSON within token limits.' +
+        ' Each object must be complete and properly closed with }.';
+    }
+
     let fullText     = '';
     let totalIn      = 0;
     let totalOut     = 0;
     // Continuation: resend with accumulated text when MAX_TOKENS hit
-    let contents     = [{ role: 'user', parts: [{ text: prompt }] }];
+    let contents     = [{ role: 'user', parts: [{ text: effectivePrompt }] }];
     const MAX_PASSES = 3;
 
     for (let pass = 0; pass < MAX_PASSES; pass++) {
@@ -210,7 +221,7 @@
         console.log('[ai-client] Gemini MAX_TOKENS — continuing…');
         // Add assistant turn with what we have, then ask to continue
         contents = [
-          { role: 'user',  parts: [{ text: prompt }] },
+          { role: 'user',  parts: [{ text: effectivePrompt }] },
           { role: 'model', parts: [{ text: fullText }] },
           { role: 'user',  parts: [{ text: 'Continue exactly from where you left off. Do not repeat anything.' }] },
         ];
