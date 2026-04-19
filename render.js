@@ -40,8 +40,8 @@ const FORCE_REFRESH = process.argv.includes('--force-refresh');
 
 // ── PIP configuration ──────────────────────────────────────────────────────────
 // Avatar width in pixels (height auto-calculated to preserve aspect ratio).
-const PIP_WIDTH    = 320;  // landscape avatar: scale to this width
-const PIP_HEIGHT   = 360;  // portrait avatar: scale to this height (full body visible)
+const PIP_WIDTH    = 160;  // landscape avatar: scale to this width
+const PIP_HEIGHT   = 180;  // portrait avatar: scale to this height (full body visible)
 
 // Position of the avatar overlay. Options:
 //   "bottom-right"  (default) — corner away from most slide content
@@ -1337,14 +1337,14 @@ async function composite(ffmpeg, ffprobe, sections, heygenPath, outPath) {
     ? [
         `[0:v]scale=1280:720:flags=lanczos[bg]`,
         `${pipScaleFilter}`,
-        `[av_scaled]pad=iw+6:ih+6:3:3:color=white[av_bordered]`,
+        `[av_scaled]pad=iw+4:ih+4:2:2:color=white[av_bordered]`,
         `[bg][av_bordered]overlay=${overlayExpr}[with_pip]`,
         `[with_pip][2:v]overlay=0:440:enable='between(t,${ctaStart},${ctaEnd})'[outv]`,
       ].join(';')
     : [
         `[0:v]scale=1280:720:flags=lanczos[bg]`,
         `${pipScaleFilter}`,
-        `[av_scaled]pad=iw+6:ih+6:3:3:color=white[av_bordered]`,
+        `[av_scaled]pad=iw+4:ih+4:2:2:color=white[av_bordered]`,
         `[bg][av_bordered]overlay=${overlayExpr}[outv]`,
       ].join(';');
 

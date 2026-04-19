@@ -529,7 +529,7 @@ async function generateScript(container) {
   const length  = container.querySelector('#script-length').value;
   const style   = container.querySelector('#script-style').value;
   const channel = container.querySelector('#script-channel').value.trim();
-  const { claudeApiKey: apiKey } = getSettings();
+  const { claudeApiKey, geminiApiKey } = getSettings();
   const audience = getTargetAudience(container);
   const toneMix  = getToneMix(container);
   const depth    = getExpertiseDepth(container);
@@ -558,12 +558,14 @@ async function generateScript(container) {
 
   try {
     let script, sources = '';
-    if (apiKey) {
-      ({ script, sources } = await generateWithClaude({ topic, tone, length, style, channel, apiKey, statusEl, audience, toneMix, depth }));
+    if (claudeApiKey || geminiApiKey) {
+      let provider;
+      ({ script, sources, provider } = await generateWithClaude({ topic, tone, length, style, channel, statusEl, audience, toneMix, depth }));
+      if (provider) showProviderBadge(container, provider);
     } else {
       script = generateTemplate({ topic, tone, length, style, channel });
       clearTimeout(t1); clearTimeout(t2);
-      statusEl.innerHTML = `<div class="status-bar info">Template mode — add a Claude API key in <strong>⚙ Settings</strong> for AI-generated scripts.</div>`;
+      statusEl.innerHTML = `<div class="status-bar info">Template mode — add a Claude or Gemini API key in <strong>⚙ Settings</strong> for AI-generated scripts.</div>`;
     }
 
     clearTimeout(t1); clearTimeout(t2);
@@ -600,9 +602,9 @@ async function generateScript(container) {
 
 async function adjustScript(container, mode) {
   if (!container._script) return;
-  const { claudeApiKey: apiKey } = getSettings();
-  if (!apiKey) {
-    showToast(container, '⚠️ Add a Claude API key in Settings first');
+  const { claudeApiKey, geminiApiKey } = getSettings();
+  if (!claudeApiKey && !geminiApiKey) {
+    showToast(container, '⚠️ Add a Claude or Gemini API key in Settings first');
     return;
   }
 
@@ -726,155 +728,24 @@ function setToolbarBusy(container, busy) {
 // ── Claude full-script generation with continuation ───────────────────────────
 
 // Fix 1: parse ALL text blocks and join them (Claude splits long responses)
-function parseScriptResponse(data) {
-  const content = data.content || [];
+// ── Provider badge ────────────────────────────────────────────────────────────
 
-  console.log(`[script] stop_reason=${data.stop_reason} blocks=${content.length}`);
-  content.forEach((b, i) => {
-    if (b.type === 'text') {
-      console.log(`[script] block[${i}] text len=${b.text.length} preview="${b.text.substring(0, 80)}"`);
-    } else {
-      console.log(`[script] block[${i}] type=${b.type}`);
-    }
-  });
-
-  const textBlocks = content.filter(b => b.type === 'text');
-  if (textBlocks.length === 0) throw new Error('No text blocks in API response.');
-
-  const joined = textBlocks.map(b => b.text).join('\n\n');
-  console.log(`[script] joined ${textBlocks.length} text block(s) → ${joined.length} chars`);
-  return joined;
+function showProviderBadge(container, provider) {
+  container.querySelector('#script-provider-badge')?.remove();
+  const badge = document.createElement('span');
+  badge.id = 'script-provider-badge';
+  badge.style.cssText = 'font-size:0.75rem;padding:2px 8px;border-radius:10px;' +
+    (provider === 'gemini'
+      ? 'background:rgba(26,115,232,.15);color:#4a8af4;border:1px solid rgba(26,115,232,.25);'
+      : 'background:rgba(255,154,0,.12);color:#d97706;border:1px solid rgba(255,154,0,.25);');
+  badge.textContent = provider === 'gemini' ? '⚡ Gemini Flash' : '🤖 Claude';
+  const wcEl = container.querySelector('#script-wordcount');
+  if (wcEl) wcEl.after(badge);
 }
 
-// Shared low-level fetch for one Claude API call
-async function callClaudeAPI(apiKey, body, statusEl) {
-  const res = await fetchWithRetry(
-    'https://api.anthropic.com/v1/messages',
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-beta': 'web-search-2025-03-05',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
-      body: JSON.stringify(body),
-    },
-    statusEl
-  );
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    if (res.status === 429) throw new Error('Rate limit hit — please wait 30 seconds and try again.');
-    const msg = err?.error?.message || res.statusText;
-    const isBalance = res.status === 400 && /credit|billing|quota/i.test(msg);
-    throw Object.assign(new Error(`Claude API error: ${msg}`), { isBalanceError: isBalance });
-  }
-  return res.json();
-}
-
-// Fix 4a: attempt WITH web search
-async function generateScriptWithWebSearch(prompt, systemPrompt, maxTokens, apiKey, statusEl) {
-  let fullScript = '';
-  let lastContent = [];
-  let messages = [{ role: 'user', content: prompt }];
-  const MAX_CONTINUATIONS = 2;
-
-  for (let pass = 0; pass <= MAX_CONTINUATIONS; pass++) {
-    const body = {
-      model: 'claude-opus-4-5',
-      max_tokens: maxTokens,
-      system: systemPrompt,
-      messages,
-      ...(pass === 0 ? { tools: [{ type: 'web_search_20250305', name: 'web_search' }] } : {}),
-    };
-
-    const data = await callClaudeAPI(apiKey, body, pass === 0 ? statusEl : null);
-    lastContent = data.content || [];
-
-    const searchCount = lastContent.filter(b => b.type === 'tool_use').length;
-    if (pass === 0 && searchCount > 0) {
-      console.log(`[script] ${searchCount} web search(es) performed`);
-    }
-
-    trackUsage('script_gen',
-      data.usage?.input_tokens  || 0,
-      data.usage?.output_tokens || 0,
-      { pass });
-
-    const chunk = parseScriptResponse(data);
-    fullScript += pass === 0 ? chunk : chunk.trimStart();
-
-    if (data.stop_reason !== 'max_tokens') break;
-
-    if (pass === MAX_CONTINUATIONS) {
-      console.warn('[script] Reached max continuations');
-      break;
-    }
-
-    console.log(`[script] Truncated at pass ${pass} — fetching continuation…`);
-    if (statusEl) statusEl.innerHTML = `<div class="status-bar info">✍️ Script is long — fetching continuation (${pass + 1}/${MAX_CONTINUATIONS})…</div>`;
-
-    messages = [
-      { role: 'user',      content: prompt },
-      { role: 'assistant', content: fullScript },
-      { role: 'user',      content: 'Please continue the script from where you left off. Do not repeat anything already written. Continue seamlessly.' },
-    ];
-  }
-
-  const sources = lastContent
-    .filter(b => b.type === 'tool_result')
-    .flatMap(b => Array.isArray(b.content)
-      ? b.content.map(x => x.text || '').filter(Boolean)
-      : [String(b.content || '')])
-    .join('\n\n');
-
-  return { script: fullScript, sources };
-}
-
-// Fix 4b: fallback WITHOUT web search (plain Claude, no tools)
-async function generateScriptWithoutWebSearch(prompt, systemPrompt, maxTokens, apiKey, statusEl) {
-  let fullScript = '';
-  let messages = [{ role: 'user', content: prompt }];
-  const MAX_CONTINUATIONS = 2;
-
-  for (let pass = 0; pass <= MAX_CONTINUATIONS; pass++) {
-    const body = {
-      model: 'claude-opus-4-5',
-      max_tokens: maxTokens,
-      system: systemPrompt,
-      messages,
-    };
-
-    const data = await callClaudeAPI(apiKey, body, pass === 0 ? statusEl : null);
-
-    trackUsage('script_gen',
-      data.usage?.input_tokens  || 0,
-      data.usage?.output_tokens || 0,
-      { pass });
-
-    const chunk = parseScriptResponse(data);
-    fullScript += pass === 0 ? chunk : chunk.trimStart();
-
-    if (data.stop_reason !== 'max_tokens') break;
-
-    if (pass === MAX_CONTINUATIONS) break;
-
-    if (statusEl) statusEl.innerHTML = `<div class="status-bar info">✍️ Script is long — fetching continuation (${pass + 1}/${MAX_CONTINUATIONS})…</div>`;
-
-    messages = [
-      { role: 'user',      content: prompt },
-      { role: 'assistant', content: fullScript },
-      { role: 'user',      content: 'Please continue the script from where you left off. Do not repeat anything already written. Continue seamlessly.' },
-    ];
-  }
-
-  return { script: fullScript, sources: '' };
-}
-
-async function generateWithClaude({ topic, tone, length, style, channel, apiKey, statusEl, audience = 'mid-level engineers', toneMix = { technical: 60, business: 25, casual: 15 }, depth = 'in-depth' }) {
-  const channelLine  = channel ? ` Channel: "${channel}".` : '';
-  const maxTokens    = TOKEN_MAP[length] ?? 4000;
+async function generateWithClaude({ topic, tone, length, style, channel, statusEl, audience = 'mid-level engineers', toneMix = { technical: 60, business: 25, casual: 15 }, depth = 'in-depth' }) {
+  const channelLine   = channel ? ` Channel: "${channel}".` : '';
+  const maxTokens     = TOKEN_MAP[length] ?? 4000;
   const audienceBlock = buildAudiencePrompt(audience, toneMix, depth);
 
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
@@ -896,34 +767,55 @@ STRUCTURE (use these labels):
 
 Write for the ear. Keep opening/closing human, not templated. Output only the script.`;
 
-  // Fix 5: live character-count progress ticker
   let charEstimate = 0;
-  const avgCharsPerSec = 40; // ~6000 chars/min typical Claude throughput
   const startTime = Date.now();
   const progressTimer = setInterval(() => {
-    charEstimate = Math.round((Date.now() - startTime) / 1000 * avgCharsPerSec);
+    charEstimate = Math.round((Date.now() - startTime) / 1000 * 40);
     if (statusEl) {
       statusEl.innerHTML = `<div class="status-bar info">✍️ Writing… (~${charEstimate.toLocaleString()} characters so far)</div>`;
     }
   }, 2000);
 
   try {
-    // Fix 4: try with web search first; fall back to plain Claude if result is too short
-    let result;
-    try {
-      result = await generateScriptWithWebSearch(prompt, systemPrompt, maxTokens, apiKey, statusEl);
-      if (result.script.length < 500) {
-        console.warn(`[script] Web-search result too short (${result.script.length} chars) — retrying without web search`);
-        if (statusEl) statusEl.innerHTML = `<div class="status-bar info">⚠️ Retrying without web search…</div>`;
-        result = await generateScriptWithoutWebSearch(prompt, systemPrompt, maxTokens, apiKey, statusEl);
-      }
-    } catch (webErr) {
-      console.warn('[script] Web-search attempt failed:', webErr.message, '— retrying without web search');
+    let result = await window.callAI({
+      prompt,
+      systemPrompt,
+      maxTokens,
+      requiresWebSearch: true,
+      action: 'script_gen',
+    });
+
+    let fullScript = result.text;
+
+    // If web-search result too short, retry without web search
+    if (fullScript.length < 500) {
+      console.warn(`[script] Web-search result too short (${fullScript.length} chars) — retrying without web search`);
       if (statusEl) statusEl.innerHTML = `<div class="status-bar info">⚠️ Retrying without web search…</div>`;
-      result = await generateScriptWithoutWebSearch(prompt, systemPrompt, maxTokens, apiKey, statusEl);
+      result = await window.callAI({
+        prompt,
+        systemPrompt,
+        maxTokens,
+        action: 'script_gen',
+      });
+      fullScript = result.text;
     }
 
-    return result;
+    // Continuation if script was truncated (missing [CLOSING] section)
+    if (fullScript.length > 200 && !fullScript.includes('[CLOSING]')) {
+      console.log('[script] Script truncated — fetching continuation…');
+      if (statusEl) statusEl.innerHTML = `<div class="status-bar info">✍️ Script is long — fetching continuation…</div>`;
+      const cont = await window.callAI({
+        systemPrompt: `${systemPrompt}\n\nYou were writing a YouTube script and were cut off. Here is what you wrote so far:\n\n${fullScript}\n\nContinue the script from exactly where you left off. Do not repeat any text already written.`,
+        prompt: 'Continue the script seamlessly from where you left off. Output only the new continuation text.',
+        maxTokens,
+        action: 'script_gen',
+      });
+      fullScript += cont.text.trimStart();
+    }
+
+    trackUsage('script_gen', result.inputTokens, result.outputTokens);
+
+    return { script: fullScript, sources: '', provider: result.provider };
   } finally {
     clearInterval(progressTimer);
   }

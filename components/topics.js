@@ -5,7 +5,6 @@
  * Results are cached in localStorage for 24 hours.
  */
 
-import { getSettings }                           from './settings.js';
 import { trackUsage, trackCacheSaving,
          TOPIC_SEARCH_COST, getAllTimeSavings,
          fmtCost }                               from './usage.js';
@@ -250,31 +249,6 @@ async function fetchTopics(container, onTopicSelect, forceRefresh, queryMode = '
   }
 }
 
-// ── Retry with exponential backoff ────────────────────────────────────────────
-
-async function fetchWithRetry(url, options, statusEl) {
-  const delays = [10, 30];
-  for (let attempt = 0; attempt <= delays.length; attempt++) {
-    const res = await fetch(url, options);
-    if (res.status !== 429) return res;
-    if (attempt === delays.length) return res;
-    const wait = delays[attempt];
-    await showCountdown(statusEl, wait);
-  }
-}
-
-async function showCountdown(statusEl, seconds) {
-  for (let i = seconds; i > 0; i--) {
-    if (statusEl) {
-      statusEl.innerHTML = `
-        <div class="status-bar error">
-          Rate limit hit — retrying in <strong>${i}s</strong>…
-        </div>`;
-    }
-    await new Promise(r => setTimeout(r, 1000));
-  }
-}
-
 // ── Fix 3: filter out topics referencing content older than 90 days ───────────
 
 function filterRecentTopics(topics) {
@@ -292,14 +266,9 @@ function filterRecentTopics(topics) {
   });
 }
 
-// ── Claude live search ────────────────────────────────────────────────────────
+// ── Live search via window.callAI (Anthropic with web search, Gemini fallback) ─
 
 async function liveSearch(niche, statusEl, queryMode = 'primary') {
-  const { claudeApiKey } = getSettings();
-  if (!claudeApiKey) {
-    throw new Error('Anthropic API key missing — add it in ⚙ Settings to fetch live topics.');
-  }
-
   // Fix 1 & 6: date-aware queries; secondary set used by "Refresh results"
   const today         = new Date();
   const ninetyDaysAgo = new Date(today - 90 * 24 * 60 * 60 * 1000);
@@ -321,13 +290,13 @@ async function liveSearch(niche, statusEl, queryMode = 'primary') {
   const queries = queryMode === 'secondary' ? secondaryQueries : primaryQueries;
 
   // Fix 2: strict recency system prompt
-  const system =
-    `You are a YouTube content strategist helping find trending tech topics RIGHT NOW in ${today.getFullYear()}.
+  const systemPrompt =
+    `You are a YouTube content strategist helping find trending topics RIGHT NOW in ${today.getFullYear()}.
 
 Today's date is ${dateStr}.
 
 CRITICAL RULES:
-1. You MUST use the web_search tool to find current topics
+1. You MUST use the web search tool to find current topics
 2. ONLY return topics that have recent web search results from the last 90 days (after ${cutoffStr})
 3. NEVER suggest topics based on your training data alone
 4. If web search returns no recent results for a niche, say so rather than inventing topics
@@ -359,53 +328,13 @@ STRICT RULES:
 
 Return 20 topics as JSON array with fields: title, summary, tags, hook, trending_since, source_hint`;
 
-  const res = await fetchWithRetry(
-    'https://api.anthropic.com/v1/messages',
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': claudeApiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-beta': 'web-search-2025-03-05',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 4000,
-        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-        system,
-        messages: [{ role: 'user', content: userMsg }],
-      }),
-    },
-    statusEl
-  );
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    if (res.status === 429) throw new Error('Rate limit hit — please wait 30 seconds and try again.');
-    const msg = err?.error?.message || res.statusText;
-    if (res.status === 400 && /credit|billing|quota/i.test(msg)) {
-      // Balance error — fall back to Gemini
-      return liveSearchGemini(niche, statusEl, queryMode);
-    }
-    throw new Error(`Claude API error (${res.status}): ${msg}`);
-  }
-
-  const data = await res.json();
-
-  const inputTokens  = data.usage?.input_tokens  || 0;
-  const outputTokens = data.usage?.output_tokens || 0;
-
-  console.log('[topics] content blocks:', (data.content || []).map(b => ({
-    type: b.type,
-    textPreview: b.type === 'text' ? b.text?.slice(0, 120) : undefined,
-  })));
-
-  // Join all text blocks (Claude may split response across multiple when using tools)
-  const textBlocks = (data.content || []).filter(b => b.type === 'text');
-  if (!textBlocks.length) throw new Error('No text response from Claude. Please try again.');
-  const fullText = textBlocks.map(b => b.text).join('\n\n');
+  const { text: fullText, inputTokens, outputTokens } = await window.callAI({
+    systemPrompt,
+    prompt: userMsg,
+    maxTokens: 4000,
+    requiresWebSearch: true,
+    action: 'topic_search',
+  });
 
   let parsed;
   try {
@@ -423,88 +352,6 @@ Return 20 topics as JSON array with fields: title, summary, tags, hook, trending
   }
 
   const mapped = parsed.map(item => ({
-    title:         String(item.title        || '').trim(),
-    desc:          String(item.summary      || item.desc || '').trim(),
-    trend:         (item.tags && item.tags[0]) ? String(item.tags[0]) : 'Trending',
-    hook:          String(item.hook         || '').trim(),
-    tags:          Array.isArray(item.tags) ? item.tags : [],
-    trending_since: String(item.trending_since || '').trim(),
-    source_hint:   String(item.source_hint  || '').trim(),
-  })).filter(t => t.title);
-
-  // Fix 3: drop any topics that reference content clearly older than 90 days
-  const topics = filterRecentTopics(mapped);
-
-  return { topics, inputTokens, outputTokens };
-}
-
-// ── Gemini fallback for topic search ─────────────────────────────────────────
-
-async function liveSearchGemini(niche, statusEl, queryMode = 'primary') {
-  const { geminiApiKey } = getSettings();
-  if (!geminiApiKey) {
-    throw new Error('Anthropic credit limit reached and no Gemini API key configured. Add a Gemini key in ⚙ Settings.');
-  }
-
-  if (statusEl) {
-    statusEl.innerHTML = `
-      <div class="status-bar info">
-        <span class="loader"></span>
-        ⚡ Switched to Gemini Flash — searching for trending topics in <strong>${escHtml(niche)}</strong>…
-      </div>`;
-  }
-
-  const today   = new Date();
-  const dateStr = today.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-
-  const systemPrompt =
-    `You are a YouTube content strategist. Today is ${dateStr}.
-Find genuinely trending topics in: ${niche}
-Use your web search grounding to find current topics from the last 90 days only.
-Return ONLY a JSON array. Each item: { title, summary (1 sentence, include "Trending since [month year]"), tags (3 max), hook (1 sentence), trending_since, source_hint }`;
-
-  const userMsg = `Find 20 trending YouTube topics in "${niche}" right now (as of ${dateStr}).
-Only include topics with evidence of recent activity in the last 90 days.
-Return as a JSON array with fields: title, summary, tags, hook, trending_since, source_hint`;
-
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: userMsg }] }],
-        tools: [{ googleSearch: {} }],
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-        generationConfig: { maxOutputTokens: 4000 },
-      }),
-    }
-  );
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(`Gemini error (${res.status}): ${err?.error?.message || res.statusText}`);
-  }
-
-  const data = await res.json();
-  const fullText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-  const usage    = data.usageMetadata || {};
-
-  let parsed;
-  try {
-    const clean = fullText.replace(/```json|```/g, '').trim();
-    const match  = clean.match(/\[[\s\S]*\]/);
-    if (!match) throw new Error('No JSON array found');
-    parsed = JSON.parse(match[0]);
-  } catch (e) {
-    throw new Error('Could not parse Gemini topics: ' + e.message);
-  }
-
-  if (!Array.isArray(parsed) || !parsed.length) {
-    throw new Error('Invalid topics format from Gemini. Please try again.');
-  }
-
-  const mapped = parsed.map(item => ({
     title:          String(item.title        || '').trim(),
     desc:           String(item.summary      || item.desc || '').trim(),
     trend:          (item.tags && item.tags[0]) ? String(item.tags[0]) : 'Trending',
@@ -514,12 +361,10 @@ Return as a JSON array with fields: title, summary, tags, hook, trending_since, 
     source_hint:    String(item.source_hint  || '').trim(),
   })).filter(t => t.title);
 
+  // Fix 3: drop any topics that reference content clearly older than 90 days
   const topics = filterRecentTopics(mapped);
-  return {
-    topics,
-    inputTokens:  usage.promptTokenCount    || 0,
-    outputTokens: usage.candidatesTokenCount || 0,
-  };
+
+  return { topics, inputTokens, outputTokens };
 }
 
 // ── Topic cards ───────────────────────────────────────────────────────────────
