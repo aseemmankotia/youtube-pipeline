@@ -9,7 +9,7 @@
  * Output: filename specified in render-input.json
  *
  * Requirements:
- *   - ANTHROPIC_API_KEY in .env
+ *   - ANTHROPIC_API_KEY or GEMINI_API_KEY in .env
  *   - ffmpeg + ffprobe installed (brew install ffmpeg)
  *   - npm install  (puppeteer, axios already in package.json)
  */
@@ -29,6 +29,7 @@ const path         = require('path');
 const axios        = require('axios');
 const puppeteer    = require('puppeteer');
 const { execSync, spawn } = require('child_process');
+const { callAI }   = require('./ai-client-node.js');
 
 const INPUT_FILE  = path.join(__dirname, 'render-input.json');
 const SLIDES_DIR  = path.join(__dirname, 'slides');
@@ -307,22 +308,12 @@ function preprocessSections(sections) {
   });
 }
 
-// ── Step 1: Split script via Anthropic API ─────────────────────────────────────
+// ── Step 1: Split script via AI ───────────────────────────────────────────────
 
 async function splitScript(script, topic) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) die('ANTHROPIC_API_KEY not set.\nAdd it to your .env file: ANTHROPIC_API_KEY=sk-ant-…');
-
-  const res = await axios.post(
-    'https://api.anthropic.com/v1/messages',
-    {
-      model: 'claude-sonnet-4-6',
-      max_tokens: 4096,
-      messages: [{
-        role: 'user',
-        content: `You are creating slide content for a YouTube video.
-
-Topic: ${topic || 'YouTube Video'}
+  const sectionsText = await callAI({
+    systemPrompt: `You are creating slide content for a YouTube video. Return ONLY valid JSON — no markdown fences, no explanation.`,
+    prompt: `Topic: ${topic || 'YouTube Video'}
 
 Script:
 """
@@ -399,22 +390,21 @@ IMPORTANT RULES FOR DIAGRAMS:
     B --> D[Data Service]
     C --> E[Database]
     D --> E`,
-      }],
-    },
-    {
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
-    }
-  );
+    maxTokens: 4096,
+    action:    'slide_splitting',
+  });
 
-  let text = res.data.content[0].text.trim();
-  // Strip markdown fences if Claude wrapped it anyway
-  text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  let text = sectionsText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    throw new Error(`Failed to parse slide sections: ${e.message}\nResponse preview: ${sectionsText.substring(0, 300)}`);
+  }
 
-  return JSON.parse(text).sections;
+  const sections = parsed.sections || parsed;
+  console.log(`   ✓ ${sections.length} slides planned`);
+  return sections;
 }
 
 // ── Steps 2 & 3: HTML slides + Puppeteer screenshots ──────────────────────────

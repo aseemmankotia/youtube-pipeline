@@ -10,7 +10,7 @@
  *         thumbnails/concepts.json
  *
  * Requirements:
- *   - ANTHROPIC_API_KEY in .env
+ *   - ANTHROPIC_API_KEY or GEMINI_API_KEY in .env
  *   - npm install  (puppeteer already in package.json)
  */
 
@@ -27,6 +27,7 @@
 const fs        = require('fs');
 const path      = require('path');
 const puppeteer = require('puppeteer');
+const { callAI } = require('./ai-client-node.js');
 
 const INPUT_FILE  = path.join(__dirname, 'thumbnail-input.json');
 const OUT_DIR     = path.join(__dirname, 'thumbnails');
@@ -156,22 +157,13 @@ function buildThumbnailHTML(concept) {
 </html>`;
 }
 
-// ── Step 1: Call Claude for thumbnail concepts ─────────────────────────────────
+// ── Step 1: Get thumbnail concepts via AI ─────────────────────────────────────
 
 async function getThumbnailConcepts(input) {
   const { topic, script, tags = [] } = input;
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type':      'application/json',
-      'x-api-key':         process.env.ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model:      'claude-opus-4-5',
-      max_tokens: 1500,
-      system: `You are a YouTube thumbnail design expert. Create 5 distinct thumbnail concepts optimised for high CTR.
+  const conceptsText = await callAI({
+    systemPrompt: `You are a YouTube thumbnail design expert. Create 5 distinct thumbnail concepts optimised for high CTR.
 
 Each concept must differ in emotion, layout approach and visual strategy.
 Return ONLY a JSON array of 5 objects with these exact fields:
@@ -188,23 +180,18 @@ Return ONLY a JSON array of 5 objects with these exact fields:
     "hook_angle":        "one sentence why this thumbnail stops scrolling"
   }
 ]`,
-      messages: [{
-        role:    'user',
-        content: `Create 5 YouTube thumbnail concepts for this video.\n\nTopic: ${topic}\nTags: ${tags.join(', ')}\n\nScript excerpt (first 500 chars):\n${(script || '').slice(0, 500)}`,
-      }],
-    }),
+    prompt: `Create 5 YouTube thumbnail concepts for this video.\n\nTopic: ${topic}\nTags: ${tags.join(', ')}\n\nScript excerpt (first 500 chars):\n${(script || '').slice(0, 500)}`,
+    maxTokens: 1500,
+    action:    'thumbnail_concepts',
   });
 
-  if (!res.ok) {
-    const e = await res.json().catch(() => ({}));
-    die(`Claude API error: ${e?.error?.message || res.statusText}`);
+  const m = conceptsText.match(/```(?:json)?\s*([\s\S]+?)```/) || conceptsText.match(/(\[[\s\S]+\])/);
+  if (!m) die(`Could not parse AI response as JSON array.\nPreview: ${conceptsText.substring(0, 200)}`);
+  try {
+    return JSON.parse(m[1]);
+  } catch (e) {
+    die(`Failed to parse thumbnail concepts: ${e.message}`);
   }
-
-  const data    = await res.json();
-  let rawText   = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
-  const m       = rawText.match(/```(?:json)?\s*([\s\S]+?)```/) || rawText.match(/(\[[\s\S]+\])/);
-  if (!m) die('Could not parse Claude response as JSON array.');
-  return JSON.parse(m[1]);
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────────
@@ -224,8 +211,8 @@ async function main() {
   if (!input.topic)  die('topic is missing from thumbnail-input.json');
   if (!input.script) die('script is missing from thumbnail-input.json');
 
-  if (!process.env.ANTHROPIC_API_KEY) {
-    die('ANTHROPIC_API_KEY not set.\nAdd it to your .env file: ANTHROPIC_API_KEY=sk-ant-…');
+  if (!process.env.ANTHROPIC_API_KEY && !process.env.GEMINI_API_KEY) {
+    die('No AI key set.\nAdd to your .env file:\n  ANTHROPIC_API_KEY=sk-ant-…\n  GEMINI_API_KEY=AIza-…  (free at aistudio.google.com)');
   }
 
   fs.mkdirSync(OUT_DIR, { recursive: true });

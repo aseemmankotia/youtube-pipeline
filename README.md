@@ -66,6 +66,24 @@ The pipeline uses **Claude (Anthropic)** as the primary AI for all generation ta
 
 Click **🤖 Test AI providers** in Settings to verify both keys work.
 
+### Render scripts (render.js / thumbnail.js / highlight.js)
+
+The local Node.js render scripts also support both providers with automatic fallback:
+
+| Provider | Quality | Cost | Setup |
+|----------|---------|------|-------|
+| Claude (Anthropic) | ⭐⭐⭐⭐⭐ | Pay per use | console.anthropic.com |
+| Gemini Flash (Google) | ⭐⭐⭐⭐ | Free tier available | aistudio.google.com |
+
+Add both to `.env` for automatic fallback:
+
+```
+ANTHROPIC_API_KEY=sk-ant-…
+GEMINI_API_KEY=AIza-…
+```
+
+When Anthropic credits run out, the render scripts automatically switch to Gemini Flash.
+
 ---
 
 | Credential | Required | Where to get it |

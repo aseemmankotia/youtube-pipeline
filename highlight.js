@@ -10,7 +10,7 @@
  *         highlight-output.json (caption data for social posts)
  *
  * Requirements:
- *   - ANTHROPIC_API_KEY in .env
+ *   - ANTHROPIC_API_KEY or GEMINI_API_KEY in .env
  *   - ffmpeg installed (brew install ffmpeg)
  *   - npm install  (puppeteer already in package.json)
  */
@@ -29,6 +29,7 @@ const fs               = require('fs');
 const path             = require('path');
 const puppeteer        = require('puppeteer');
 const { execFileSync } = require('child_process');
+const { callAI }       = require('./ai-client-node.js');
 
 const INPUT_FILE  = path.join(__dirname, 'highlight-input.json');
 const TEMP_DIR    = path.join(__dirname, 'temp');
@@ -178,28 +179,19 @@ async function main() {
     );
   }
 
-  if (!process.env.ANTHROPIC_API_KEY) {
-    die('ANTHROPIC_API_KEY not set.\nAdd it to your .env file: ANTHROPIC_API_KEY=sk-ant-…');
+  if (!process.env.ANTHROPIC_API_KEY && !process.env.GEMINI_API_KEY) {
+    die('No AI key set.\nAdd to your .env file:\n  ANTHROPIC_API_KEY=sk-ant-…\n  GEMINI_API_KEY=AIza-…  (free at aistudio.google.com)');
   }
 
   fs.mkdirSync(TEMP_DIR, { recursive: true });
 
   const ffmpeg = findBinary('ffmpeg');
 
-  // ── Step 1: Find best 60-second segment via Claude ─────────────────────────
+  // ── Step 1: Find best 60-second segment via AI ────────────────────────────
   log('\n🤖 Step 1 — Analysing script for best 60-second segment…');
 
-  const apiResponse = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type':      'application/json',
-      'x-api-key':         process.env.ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model:      'claude-sonnet-4-20250514',
-      max_tokens: 500,
-      system: `You analyze video scripts to find the most viral-worthy 60-second segment for TikTok/Reels.
+  const segmentText = await callAI({
+    systemPrompt: `You analyze video scripts to find the most viral-worthy 60-second segment for TikTok/Reels.
 
 Choose a segment that:
 - Makes a strong standalone point
@@ -221,22 +213,12 @@ Return ONLY JSON, no other text:
   "caption_line3": "CTA line e.g. Full video in bio",
   "suggested_hashtags": ["#tag1", "#tag2", "#tag3", "#tag4", "#tag5"]
 }`,
-      messages: [{
-        role:    'user',
-        content: `Find the best 60-second highlight segment from this script about: ${topic}\n\n${script}`,
-      }],
-    }),
+    prompt:    `Find the best 60-second highlight segment from this script about: ${topic}\n\n${script}`,
+    maxTokens: 500,
+    action:    'highlight_selection',
   });
 
-  if (!apiResponse.ok) {
-    const err = await apiResponse.json().catch(() => ({}));
-    die(`Claude API error: ${err?.error?.message || apiResponse.statusText}`);
-  }
-
-  const apiData = await apiResponse.json();
-  let rawText = (apiData.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
-  rawText = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
-
+  let rawText = segmentText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
   const segment = JSON.parse(rawText);
   log(`   ✓ Segment found: "${segment.start_text}…"`);
   log(`   Hook type: ${segment.hook_type}`);
