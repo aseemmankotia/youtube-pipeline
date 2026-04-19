@@ -147,47 +147,87 @@
   }
 
   // ── Gemini call ──────────────────────────────────────────────────────────────
+
+  function _extractGeminiText(data) {
+    // Join ALL parts (Gemini can split output across multiple parts)
+    const parts = data.candidates?.[0]?.content?.parts || [];
+    return parts.map(p => p.text || '').join('');
+  }
+
   async function _callGemini({ prompt, systemPrompt, maxTokens }) {
     const s = _getSettings();
     const apiKey = s.geminiApiKey;
     if (!apiKey) throw Object.assign(new Error('No Gemini API key configured.'), { isConfig: true });
 
-    const model = window.AI_PROVIDERS.gemini.model;
-    const url   = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    const model      = window.AI_PROVIDERS.gemini.model;
+    const url        = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    // Give Gemini headroom: cap at 8192 (model max for flash)
+    const outTokens  = Math.min((maxTokens || 4096) * 2, 8192);
 
-    const contents = [{ role: 'user', parts: [{ text: prompt }] }];
-    const body = {
-      contents,
-      tools: [{ googleSearch: {} }],
-      generationConfig: { maxOutputTokens: maxTokens || 4096 },
-    };
-    if (systemPrompt) {
-      body.systemInstruction = { parts: [{ text: systemPrompt }] };
+    let fullText     = '';
+    let totalIn      = 0;
+    let totalOut     = 0;
+    // Continuation: resend with accumulated text when MAX_TOKENS hit
+    let contents     = [{ role: 'user', parts: [{ text: prompt }] }];
+    const MAX_PASSES = 3;
+
+    for (let pass = 0; pass < MAX_PASSES; pass++) {
+      const body = {
+        contents,
+        tools: [{ googleSearch: {} }],
+        generationConfig: { maxOutputTokens: outTokens },
+      };
+      if (systemPrompt) {
+        body.systemInstruction = { parts: [{ text: systemPrompt }] };
+      }
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        const msg = data?.error?.message || res.statusText;
+        throw new Error(`Gemini error (${res.status}): ${msg}`);
+      }
+
+      const chunk        = _extractGeminiText(data);
+      const finishReason = data.candidates?.[0]?.finishReason || '';
+      const usage        = data.usageMetadata || {};
+
+      fullText  += chunk;
+      totalIn   += usage.promptTokenCount    || 0;
+      totalOut  += usage.candidatesTokenCount || 0;
+
+      console.log(`[ai-client] Gemini pass ${pass + 1}: ${chunk.length} chars, finishReason=${finishReason}, tokens in=${usage.promptTokenCount} out=${usage.candidatesTokenCount}`);
+
+      if (finishReason !== 'MAX_TOKENS') break;
+
+      if (pass < MAX_PASSES - 1) {
+        console.log('[ai-client] Gemini MAX_TOKENS — continuing…');
+        // Add assistant turn with what we have, then ask to continue
+        contents = [
+          { role: 'user',  parts: [{ text: prompt }] },
+          { role: 'model', parts: [{ text: fullText }] },
+          { role: 'user',  parts: [{ text: 'Continue exactly from where you left off. Do not repeat anything.' }] },
+        ];
+      }
     }
 
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-
-    const data = await res.json().catch(() => ({}));
-
-    if (!res.ok) {
-      const msg = data?.error?.message || res.statusText;
-      throw new Error(`Gemini error (${res.status}): ${msg}`);
+    const wordCount = fullText.trim().split(/\s+/).filter(Boolean).length;
+    if (wordCount < 500) {
+      console.warn(`[ai-client] Gemini response may be truncated: only ${wordCount} words`);
     }
-
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    const usage = data.usageMetadata || {};
 
     return {
-      text,
-      inputTokens:  usage.promptTokenCount    || 0,
-      outputTokens: usage.candidatesTokenCount || 0,
+      text:         fullText,
+      inputTokens:  totalIn,
+      outputTokens: totalOut,
       provider:     'gemini',
       model,
-      raw:          data,
     };
   }
 
